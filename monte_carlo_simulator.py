@@ -9,7 +9,7 @@ def main():
     T, R, A = 3 * [0]
     paths = []
     j = 0
-    for i in range(1):
+    for i in range(100):
         photon = mc.Photon(650, system=system)
         while not photon.is_terminated:
             photon.move()

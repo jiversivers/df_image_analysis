@@ -453,3 +453,9 @@ class OpticalMedium:
     @property
     def albedo(self):
         return self.mu_a / self.mu_t
+
+# TODO: write function to take data from the MC simulation and insert into a database to be used at fitting. This should
+#  include overwrite options for when simulation parameters match what has already been inserted, in the case of
+#  updates.
+def insert_into_mclut_database(simulation_parameters, simulation_results):
+    pass

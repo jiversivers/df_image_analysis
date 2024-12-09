@@ -1,3 +1,5 @@
+import inspect
+
 import numpy as np
 
 
@@ -250,6 +252,7 @@ class Photon:
         These shorthand steps will be used to organize the code, with steps and sub-steps in comments preceding
         lines/blocks that accomplish them.
         """
+        print(f'Current: {self.location_coordinates}. New: {new_coordinates}')
         if not self.is_terminated:
             # 0) Get interface crossing
             # (returns two interfaces and plane of interface if crossed (note: does not return the interface the photon
@@ -257,6 +260,8 @@ class Photon:
             # of boundary crossing a system boundary, else returns false and empty list for plane)
             try:
                 interface, plane = self.system.interface_crossed(self.location_coordinates, new_coordinates)
+                # TODO: Issue where this returns the system boundary instead of the interface plane when both are crossed. SPecifically, founda  case where photon is travelling in negative z direciton from positive of first interface to negative of system entry, and the plane returned the system boundary of 0 insted of the z location of the first interface.
+                print(f'Plane: {plane}')
             except UnboundLocalError:
                 print(self.location_coordinates, new_coordinates)
                 assert False
@@ -268,19 +273,24 @@ class Photon:
                     if not self.has_refracted():
                         # 1.A.i.a) Update current medium
                         if plane == self.system.boundaries[0] or plane == self.system.boundaries[-1]:
+                            print('1.A.i.a')
                             self.medium = self.headed_into()
-                        # 1.a.i.b) Refract
+                        # 1.A.i.b) Refract
                         else:
+                            print('1.A.i.b')
                             self.reflect((self.medium, self.headed_into))
                             self.refract((self.medium, self.headed_into))
 
                 # 1.B) Reflect (updates weight)
+                print(f'1.B) {interface}')
                 self.reflect(interface)
 
                 # 1.C) Move to interface
                 # Calculate fraction of step needed to move only to interface and update
                 d_location = new_coordinates - self.location_coordinates
+                print(f'1.C) Delta_location: {d_location}')
                 fraction = (plane - self.location_coordinates[2]) / (d_location[2])
+                print(f'1.C) Fraction: {fraction}')
                 new_coordinates[0] = self.location_coordinates[0] + fraction * d_location[0]
                 new_coordinates[1] = self.location_coordinates[1] + fraction * d_location[1]
                 new_coordinates[2] = plane
@@ -288,18 +298,23 @@ class Photon:
                 self.location_history.append(new_coordinates)
 
                 # 1.D) Refract (updates direction and medium)
+                print('1.D')
                 self.refract(interface)
 
                 # 1.E) Move remaining fraction(recurse)
                 d_location = self.directional_cosines * (interface[0].mu_t / interface[1].mu_t) * (
-                        1 - fraction) * d_location
+                        1 - fraction) * abs(d_location)
+                print(f'1.E) Delta_location: {d_location}')
                 self.location_coordinates = self.location_coordinates + d_location
 
+            # If system is exited
             elif interface:
                 # 1.C) Move to boundary
                 # Calculate fraction of step needed to move only to boundary and update
                 d_location = new_coordinates - self.location_coordinates
+                print(f'11.C) Delta_location: {d_location}')
                 fraction = (plane - self.location_coordinates[2]) / (d_location[2])
+                print(f'11.C) Fraction: {fraction}')
                 new_coordinates[0] = self.location_coordinates[0] + fraction * d_location[0]
                 new_coordinates[1] = self.location_coordinates[1] + fraction * d_location[1]
                 new_coordinates[2] = plane
@@ -310,37 +325,47 @@ class Photon:
             else:
                 # To make the logic match for the at-interface cases, set plane to current z
                 plane = self.location_coordinates[2]
-
+                print(f'2) Plane: {plane}')
                 # 2.A) If at an interface
                 if self.location_coordinates[2] in self.system.boundaries:
                     # 2.A.i) Moving into a new medium
                     if not self.has_refracted():
                         # 2.A.i.a) Update current medium and move (recurse)
                         if plane == self.system.boundaries[0] or plane == self.system.boundaries[-1]:
+                            print(f'2.A.i.a) Old Medium: {self.medium.type}. New Medium: {self.headed_into.type}')
                             self.medium = self.headed_into
                             self.location_coordinates = new_coordinates
                         # 2.A.i.b) Refract and move (recurse)
                         else:
+                            print(f'2.A.i.b) Old: {self.medium.type}. New: {self.headed_into.type}')
                             self.reflect((self.medium, self.headed_into))
                             self.refract((self.medium, self.headed_into))
                             self.location_coordinates = new_coordinates
                     # 2.A.ii) Move
                     else:
+                        print(f'2.A.ii) Old: {self.medium.type}. New: {self.system.in_medium(new_coordinates).type}')
                         self._location_coordinates = new_coordinates
                         self.location_history.append(new_coordinates)
                         self.medium = self.system.in_medium(self.location_coordinates)
                 # 2.B) Move
                 else:
+                    print(f'2.B) Old: {self.medium.type}. New: {self.system.in_medium(new_coordinates).type}')
                     self._location_coordinates = new_coordinates
                     self.location_history.append(new_coordinates)
                     self.medium = self.system.in_medium(self.location_coordinates)
 
-        if self.location_coordinates[2] >= self.system.boundaries[-1]:
-            self.T += self.weight
-            self.is_terminated = True
-        elif self.location_coordinates[2] <= self.system.boundaries[0]:
-            self.R += self.weight
-            self.is_terminated = True
+            if self.location_coordinates[2] >= self.system.boundaries[-1]:
+                print('Transmitted')
+                print(f'T = {self.T}. Weight = {self.weight}')
+                self.T += self.weight
+                self.weight = 0
+                print(f'New T = {self.T}')
+            elif self.location_coordinates[2] <= self.system.boundaries[0]:
+                print('Reflected')
+                print(f'R = {self.R}. Weight = {self.weight}')
+                self.R += self.weight
+                self.weight = 0
+                print(f'New R = {self.R}')
 
     def has_refracted(self):
         # Check what direction photon is headed
@@ -427,13 +452,16 @@ class Photon:
             self.directional_cosines[2] = -(np.sin(theta) * np.cos(phi) * deno) + mu_z * np.cos(theta)
 
     def reflect(self, interface):
+        print(f'Reflect called from: {inspect.stack()[1].function}')
+        print(f'At {self.location_coordinates} headed {self.directional_cosines}')
+        print(interface[0].type, interface[1].type)
         specular_reflection = abs(
-            ((interface[1].n - interface[0].n) ** 2)
-            /
+            (interface[1].n - interface[0].n) /
             (interface[1].n + interface[0].n)
-        )
-        self.R += self.weight * specular_reflection
-        self.weight = self.weight - self.weight * specular_reflection
+        ) ** 2
+        if self.directional_cosines[2] > 0:
+            self.R += self.weight * specular_reflection
+        self.weight = self.weight * (1 - specular_reflection)
 
 
 class OpticalMedium:

@@ -164,6 +164,7 @@ def get_default_values(column, db_file='hbo2_hb.db'):
     return [item[0] for item in data]
 
 # Returns tuple of lambdas with associated extinction coefficients for given lambdas from the db
+## TODO: Add linear interpolation for cases when exact wavelength match is not present in .db
 def get_coefficients(lambda_values, db_file='hbo2_hb.db'):
     # Connect to the database
     conn = sqlite3.connect(db_file)

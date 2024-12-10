@@ -4,7 +4,7 @@ import numpy as np
 
 
 class System:
-    def __init__(self, *args):
+    def __init__(self, *args, surrounding_n=1):
         """
         Args comes in groups of 2:
             0: the medium
@@ -13,38 +13,38 @@ class System:
         the top block starts at inf (typically air or water).
         """
         assert len(args) % 2 == 0, "Arguments must be in groups of 2: medium object and thickness."
+        self.surroundings = OpticalMedium(n=surrounding_n, type='surroundings')
 
         # Stack layers
         interface = 0
-        self.stack = {}
-        self.layer = []
-        self.boundaries = []
+        self.stack = {(float('-inf'), interface): self.surroundings}
+        self.layer = [self.surroundings]
+        boundaries = []
         for i in range(0, len(args), 2):
             self.stack[(interface, interface + args[i + 1])] = args[i]
             self.layer.append(args[i])
-            self.boundaries.append(interface)
+            boundaries.append(interface)
             interface += args[i + 1]
 
         # Last layer finish
-        self.boundaries.append(interface)
+        boundaries.append(interface)
+        self.boundaries = np.asarray(boundaries)
+        self.stack[(interface, float('inf'))] = self.surroundings
 
     def in_medium(self, location):
+        # Return the medium(s) that are at the queried coordinate. If the coordinate is an interface location, the
+        # mediums that makeup the interface are returned as a tuple, this includes boundary interfaces being returned
+        # with False on the surroundings side.
         z = location[2] if isinstance(location, (tuple, list, np.ndarray)) else location
-        if z < self.boundaries[0] or z > self.boundaries[-1]:
-            return False
-        elif z == self.boundaries[0]:
-            in_ = [[], self.layer[0]]
-        elif z == self.boundaries[-1]:
-            in_ = [self.layer[-1], []]
-        else:
-            in_ = []
-            for boundaries, media in self.stack.items():
-                if z == boundaries[0]:
-                    in_.append(media)
-                elif z == boundaries[1]:
-                    in_ = [media]
-                elif boundaries[0] < z < boundaries[1]:
-                    in_ = media
+        for bound, medium in self.stack.items():
+            if bound[0] < z < bound[1]:
+                in_ = medium
+                break
+            elif z == bound[0]:
+                in_ = (self.in_medium(np.nextafter(z, float('-inf'))),
+                       self.in_medium(np.nextafter(z, float('inf')))
+                       )
+                break
         return in_
 
     def interface_crossed(self, location1, location2):
@@ -53,73 +53,38 @@ class System:
         for location in [location1, location2]:
             z.append(location[2] if isinstance(location, (tuple, list, np.ndarray)) else location)
 
-        # Get direction of vector
-        z_dir = np.sign(z[1] - z[0])
-
-        # Get media at zs
-        interface = [self.in_medium(z[0]), self.in_medium(z[1])]
-
-        # Deal with edge cases for individual coordinates
-        exited = False
-        for i, medium in enumerate(interface):
-            # When z is at an interface, find which medium is on the side of the interface of the vector (the one that
-            # is fully passed through, not the one that is just being entered/exited)
-            if isinstance(medium, (list, tuple)):
+        for i, loc in enumerate(z):
+            if loc in self.boundaries:
                 # Bumps the coords towards the other z.
                 # When i = 0, coords are bumped forward in the direction of z_dir (toward z[1])
                 # When i = 1, coords are bumped backwards of the direction of z_dir (toward z[0])
-                bumped_coords = np.nextafter(z[i], z[1 - i])
+                z[i] = np.nextafter(loc, z[1 - i])
 
-                # Find the medium at the bumped coords to find which medium is actually passed through
-                interface[i] = self.in_medium(bumped_coords)
+        # Get direction of vector
+        z_dir = np.sign(z[1] - z[0])
 
-            # When the location is outside the system, find the medium at the nearest edge of the system
-            elif not medium:
-                if z[i] < self.boundaries[0]:
-                    interface[i] = self.layer[0]
-                    plane = self.boundaries[0]
-                else:
-                    interface[i] = self.layer[-1]
-                    plane = self.boundaries[-1]
-                exited = exited or not (self.boundaries[0] < z[i] < self.boundaries[-1])
+        # Sort for easier logic
+        z_sorted = np.sort(z)
 
-        # Now we are ready to determine if the path actually crosses an interface:
-        # First handle no boundary crossing
-        # (there is an edge case possible where two boundaries are crossed from one medium back into the same medium...
-        # this is mitigated by building the system without copying media)
-        if interface[0] == interface[1] and not exited:
-            return False, []
-        elif interface[0] == interface[1]:
-            return (self.in_medium(z[0]), self.in_medium(z[1])), plane
-        else:
-            # Sort the zs for more straight-forward comparisons
-            ends = z
-            ends.sort()
+        # Check if any boundaries fall between the zs
+        crossed = [z_sorted[0] < bound < z_sorted[1] for bound in self.boundaries]
 
-            # Determine which boundary(ies) would be crossed by which boundaries are between the ends
-            crossed = [ends[0] <= bound <= ends[1] for bound in self.boundaries]
+        # Determine the distance of each boundary from the start coordinate
+        dist_from_start = np.abs(self.boundaries - z[0])
+        dist_from_start[[not cross for cross in crossed]] = float('inf')
+        plane = self.boundaries[crossed and dist_from_start == np.min(dist_from_start)][0] if not np.all(
+            dist_from_start == float('inf')) else False
 
-            # Determine distance of start to each boundary,
-            # (Will ignore a boundary the photon is currently at)
-            dist = abs(self.boundaries - z[0])
+        # If an interface is crossed, get the two mediums
+        interface = []
+        if plane:
+            interface.append(self.in_medium(np.nextafter(plane, -1 * z_dir * np.finfo(np.float64).max)))
+            interface.append(self.in_medium(np.nextafter(plane, z_dir * np.finfo(np.float64).max)))
 
-            # Determine the rank of the boundaries' distances from the start of the vector
-            order = np.argsort(dist)
+        return tuple(interface), plane
 
-            # Find which boundary of the crossed boundaries is the closest, it will be crossed first, excluding the
-            # boundary a photon is currently sitting on (if it is), which will have a distance of 0
-            for idx in order:
-                if crossed[idx] and dist[idx] > 0:
-                    plane = self.boundaries[idx]
-                    break
-
-            # Figure out what the second medium is that makes up the interface
-            for boundaries, media in self.stack.items():
-                if plane in boundaries and interface[0] != media:
-                    interface = (interface[0], media)
-                    break
-
-            return interface, plane
+    def system_figure(self):
+        pass
 
 
 class Photon:
@@ -129,24 +94,165 @@ class Photon:
                  location_coordinates=(0, 0, 0),
                  weight=1,
                  russian_roulette_constant=20):
+
+        # Init photon state
         self.wavelength = wavelength
         self.system = system
-        self.directional_cosines = directional_cosines
-        self.location_coordinates = location_coordinates
+        self.directional_cosines = np.asarray(directional_cosines, dtype=np.float64)
+        self.location_coordinates = np.asarray(location_coordinates, dtype=np.float64)
         self.weight = weight
-        self.russion_roulette_constant = 20
+        self.russian_roulette_constant = russian_roulette_constant
+        self._medium = None
+
+        # Init trackers
+        self.location_history = [self.location_coordinates]
+        self.A = 0.0
+        self.T = 0.0
+        self.R = 0.0
+
+    @property
+    def weight(self):
+        return self._weight
+
+    @weight.setter
+    def weight(self, weight):
+        if 0 < weight < 0.005:
+            self.russian_roulette()
+        elif weight <= 0:
+            self._weight = 0
+        else:
+            self._weight = weight
+
+    def russian_roulette(self):
+        if np.random.rand() < 1 / self.russian_roulette_constant:
+            self._weight = 0
+        else:
+            self._weight * self.russian_roulette_constant
+
+    @property
+    def medium(self):
+        self._medium = self.system.in_medium(self.location_coordinates)
+        if isinstance(self._medium, (list, tuple)):
+            self._medium = self.headed_into
+        return self._medium
+
+    @property
+    def is_terminated(self):
+        return (self.medium == self.system.surroundings or self.weight <= 0.0)
+
+    @property
+    def headed_into(self):
+        bumped_coords = self.location_coordinates
+        medium = []
+        while isinstance(medium, (list, tuple)):
+            medium = self.system.in_medium(bumped_coords)
+            # Increment coordinates smallest possible amount in same direction of the photon
+            bumped_coords = np.nextafter(self.location_coordinates,
+                                         np.finfo(np.float64).max * np.sign(self.directional_cosines))
+        return medium
 
     def move(self, step=None):
         mu_t = self.medium.mu_t
         step = -np.log(np.random.rand()) / mu_t if step is None else step
+        d_loc = step * self.directional_cosines
+        new_coords = d_loc + self.location_coordinates
 
+        # If an interface is crossed
+        interface, plane = self.system.interface_crossed(self.location_coordinates, new_coords)
+        while interface and plane:
+            # Update new_coords to the fraction of the step to the interface
+            step_frac = (plane - self.location_coordinates[2]) / d_loc[2]
+            new_coords = self.location_coordinates + step_frac * d_loc
+            self.location_coordinates = new_coords
+            self.location_history.append(new_coords)
 
+            # Reflect and refract
+            self.reflect(interface)
+            self.refract(interface)
+
+            # Move the rest, rescaling the remaining step for the new medium
+            step *= mu_t / self.medium.mu_t
+            mu_t = self.medium.mu_t
+            d_loc = step * self.directional_cosines
+            new_coords = d_loc + self.location_coordinates
+            interface, plane = self.system.interface_crossed(self.location_coordinates, new_coords)
+        # Final non-crossing move
+        self.location_coordinates = new_coords
+        self.location_history.append(new_coords)
+
+        if self.location_coordinates[2] < self.system.boundaries[0]:
+            self.R += self.weight
+            self.weight = 0
+        elif self.location_coordinates[2] > self.system.boundaries[-1]:
+            self.T += self.weight
+            self.weight = 0
+
+    def refract(self, interface):
+        sin_theta_t = (interface[0].n / interface[1].n) * np.sqrt(1 - self.directional_cosines[2] ** 2)
+
+        # Critical angle reflection
+        if sin_theta_t > 1:
+            self.directional_cosines[2] = -self.directional_cosines[2]
+        # Snell's law
+        else:
+            self.directional_cosines[2] = np.sign(self.directional_cosines[2]) * np.sqrt(1 - sin_theta_t ** 2)
+        self.directional_cosines /= np.linalg.norm(self.directional_cosines)
+
+    # For simplicity, the reflected fraction will not be tracked any further for now (to avoid recursive photons). It
+    # will just be simplified to continue in the exact same direction to infinity
+    def reflect(self, interface):
+        specular_reflection = abs(
+            (interface[1].n - interface[0].n) /
+            (interface[1].n + interface[0].n)
+        ) ** 2
+        # If the reflected fraction will be reflected out, add it to reflected count,
+        if self.directional_cosines[2] > 0:
+            self.R += self.weight * specular_reflection
+        # Else add it to transmitted
+        else:
+            self.T += self.weight * specular_reflection
+        self.weight = self.weight * (1 - specular_reflection)
+
+    def absorb(self):
+        self.A += self.weight * self.medium.albedo
+        self.weight = self.weight - (self.weight * self.medium.albedo)
+
+    def scatter(self):
+        # Sample random scattering angles from distribution
+        [xi, zeta] = np.random.rand(2)
+        if self.medium.g != 0.0:
+            lead_coeff = 1 / (2 * self.medium.g)
+            term_2 = self.medium.g ** 2
+            term_3 = (1 - term_2) / (1 - self.medium.g + (2 * self.medium.g * xi))
+            cosine_theta = lead_coeff * (1 + term_2 - term_3)
+        else:
+            cosine_theta = (2 * xi) - 1
+        theta = np.arccos(cosine_theta)
+        phi = 2 * np.pi * zeta
+
+        # Update direction cosines
+        mu_x, mu_y, mu_z = self.directional_cosines
+
+        if np.abs(mu_z) > 0.999:
+            self.directional_cosines[0] = np.sin(theta) * np.cos(phi)
+            self.directional_cosines[1] = np.sin(theta) * np.sin(phi)
+            self.directional_cosines[2] = np.sign(mu_z) * np.cos(theta)
+        else:
+            deno = np.sqrt(1 - (mu_z ** 2))
+            numr1 = (mu_x * mu_y * np.cos(phi)) - (mu_y * np.sin(phi))
+            self.directional_cosines[0] = (np.sin(theta) * (numr1 / deno)) + (mu_x * np.cos(theta))
+            numr2 = (mu_y * mu_z * np.cos(phi)) + (mu_x * np.sin(phi))
+            self.directional_cosines[1] = (np.sin(theta) * (numr2 / deno)) + (mu_y * np.cos(theta))
+            self.directional_cosines[2] = -(np.sin(theta) * np.cos(phi) * deno) + mu_z * np.cos(theta)
+
+        # Explicit normalization to solve varied precision
+        self.directional_cosines /= np.linalg.norm(self.directional_cosines)
 
 
 class OpticalMedium:
 
     ## TODO: add metod for mu_s and mu_a to return coefficients as funcitons of photon wavelength
-    def __init__(self, n, mu_s, mu_a, g, type='default'):
+    def __init__(self, n=1, mu_s=1, mu_a=0, g=1, type='default'):
         self.type = type
         self.n = n
         self.mu_s = mu_s
@@ -160,6 +266,7 @@ class OpticalMedium:
     @property
     def albedo(self):
         return self.mu_a / self.mu_t
+
 
 # TODO: write function to take data from the MC simulation and insert into a database to be used at fitting. This should
 #  include overwrite options for when simulation parameters match what has already been inserted, in the case of

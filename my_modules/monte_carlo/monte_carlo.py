@@ -1,4 +1,5 @@
 import numpy as np
+from matplotlib import pyplot as plt
 
 
 class System:
@@ -169,7 +170,7 @@ class Photon:
             self.refract(interface)
 
             # Move the rest, rescaling the remaining step for the new medium
-            step *= mu_t / self.medium.mu_t
+            step *= (1 - step_frac) * mu_t / self.medium.mu_t
             mu_t = self.medium.mu_t
             d_loc = step * self.directional_cosines
             new_coords = d_loc + self.location_coordinates
@@ -246,6 +247,27 @@ class Photon:
         # Explicit normalization to solve varied precision
         self.directional_cosines /= np.linalg.norm(self.directional_cosines)
 
+    def plot_path(self, project_onto=None, axes=None, ignore_outside=True):
+        project_onto = ['xz', 'yz', 'xy'] if project_onto == 'all' else project_onto
+        project_onto = [project_onto] if not isinstance(project_onto, (list, tuple)) else project_onto
+        data = {'x': [], 'y': [], 'z': []}
+        for loc in self.location_history:
+            if ignore_outside and (loc[2] < self.system.boundaries[0] or loc[2] > self.system.boundaries[-1]):
+                break
+            data['x'].append(loc[0])
+            data['y'].append(loc[1])
+            data['z'].append(loc[2])
+
+        (_, axes) = plt.subplots(1, len(project_onto), figsize=(24, 6)) if axes is None else ([], axes)
+        for ax, projection in zip(axes, project_onto):
+            x = data[projection[0]]
+            y = data[projection[1]]
+            ax.plot(x, y, label=projection)
+            ax.set_title(f'Projected onto {projection}-plane')
+            ax.set_xlabel(f'Photon Displacement in {projection[0]}-direction (cm)')
+            ax.set_ylabel(f'Photon Displacement in {projection[1]}-direction (cm)')
+
+        return (plt.gcf(), axes)
 
 class OpticalMedium:
 

@@ -1,3 +1,5 @@
+import sqlite3
+
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -82,8 +84,21 @@ class System:
 
         return tuple(interface), plane
 
-    def system_figure(self):
-        pass
+    def represent_on_axis(self, ax=None):
+        if ax is None:
+            ax = plt.gca()
+        ax.set_ylim([-0.1 * self.boundaries[-1], 1.1 *self.boundaries[-1]])
+        alpha = 0.0
+        for bound, medium in self.stack.items():
+            depth = np.diff(bound)
+            y_edge = bound[0] - 0.1 * depth
+            x_edge = ax.set_xlim(ax.get_xlim())[0] * 0.95
+            ax.text(x_edge, y_edge, medium.type, fontsize=12)
+            line_x = 100 * np.asarray(ax.get_xlim())
+            alpha += 0.2
+            ax.fill_between(line_x, bound[0], bound[1],
+                            color='gray' if medium.color is None else medium.color,
+                            alpha=alpha if medium.color is None else 1)
 
 
 class Photon:
@@ -269,15 +284,17 @@ class Photon:
 
         return (plt.gcf(), axes)
 
+
 class OpticalMedium:
 
     ## TODO: add metod for mu_s and mu_a to return coefficients as funcitons of photon wavelength
-    def __init__(self, n=1, mu_s=1, mu_a=0, g=1, type='default'):
+    def __init__(self, n=1, mu_s=1, mu_a=0, g=1, type='default', display_color=None):
         self.type = type
         self.n = n
         self.mu_s = mu_s
         self.mu_a = mu_a
         self.g = g
+        self.color = display_color
 
     @property
     def mu_t(self):
@@ -291,5 +308,29 @@ class OpticalMedium:
 # TODO: write function to take data from the MC simulation and insert into a database to be used at fitting. This should
 #  include overwrite options for when simulation parameters match what has already been inserted, in the case of
 #  updates.
-def insert_into_mclut_database(simulation_parameters, simulation_results):
-    pass
+def insert_into_mclut_database(simulation_parameters, simulation_results, db_file='mclut.db'):
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+
+    # Create the table if it doesn't exist
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS simulation_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sO2 REAL,
+        tHb REAL,
+        wavelength REAL,
+        g REAL,
+        transmission REAL,
+        reflectance REAL,
+        absorption REAL
+    )
+    """)
+
+    # Insert the simulation data
+    cursor.execute("""
+    INSERT INTO simulation_results (sO2, tHb, wavelength, g, transmission, reflectance, absorption)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (*simulation_parameters, *simulation_results))
+
+    conn.commit()
+    conn.close()

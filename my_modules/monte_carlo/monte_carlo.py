@@ -1,7 +1,13 @@
 import sqlite3
-
-import numpy as np
 from matplotlib import pyplot as plt
+
+try:
+    import cupy as np
+    if not np.is_available():
+        raise RuntimeError("CUDA not available; reverting to NumPy.")
+except (ImportError, RuntimeError) as e:
+    import numpy as np
+    np.is_available = lambda: False  # Mock the `is_available` method for consistency
 
 
 class System:
@@ -316,21 +322,29 @@ def insert_into_mclut_database(simulation_parameters, simulation_results, db_fil
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS simulation_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sO2 REAL,
-        tHb REAL,
-        wavelength REAL,
+        mu_s REAL,
+        mu_a REAL,
         g REAL,
+        depth REAL,
         transmission REAL,
         reflectance REAL,
-        absorption REAL
+        absorption REAL,
+        UNIQUE (mu_s, mu_a, g, depth)
     )
     """)
 
     # Insert the simulation data
     cursor.execute("""
-    INSERT INTO simulation_results (sO2, tHb, wavelength, g, transmission, reflectance, absorption)
+    INSERT INTO simulation_results (mu_s, mu_a, g, depth, transmission, reflectance, absorption)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (*simulation_parameters, *simulation_results))
 
     conn.commit()
     conn.close()
+
+def sample_illumination(diameters=(1.7, 2.0), d_i = 325, f=100):
+    # Find the range of angles to sample
+    phi = np.arctan(0.5 * np.asarray(diameters) / d_i * ((d_i / f) - 1))
+    # Sample the range uniformly and convert to direciton cosine
+    gamma = np.cos(np.random.uniform(*phi))
+    return gamma

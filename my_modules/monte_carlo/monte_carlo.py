@@ -342,6 +342,7 @@ def insert_into_mclut_database(simulation_parameters, simulation_results, db_fil
     conn.commit()
     conn.close()
 
+# TODO: Update to get all direction cosines after sampling gamma.
 def sample_illumination(diameters=(1.7, 2.0), d_i = 325, f=100):
     # Find the range of angles to sample
     phi = np.arctan(0.5 * np.asarray(diameters) / d_i * ((d_i / f) - 1))

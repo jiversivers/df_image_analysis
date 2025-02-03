@@ -13,12 +13,26 @@ except (ImportError, RuntimeError) as e:
 class System:
     def __init__(self, *args, surrounding_n=1):
         """
-        Args comes in groups of 2:
-            0: the medium
-            1: the thickness
-        The blocks are constructed top down in the order they are received and with a semi-infinite approximation; i.e.
-        the top block starts at inf (typically air or water).
+        Create a system of optical mediums and its surroundings that hold the optical properties and can determine the
+        medium of a location as well as interface crossing given two locations. The blocks are constructed top down in
+        the order they are received from the top down (positive z is downward) starting at 0 and surrounded by infinite
+        surroundings.
+
+        ### Process
+        1. Create the surroundings using the input or default n
+        2. Stack the surroundings from z=negative infinity to z=0
+        3. Iterate through all *args, and create the following:
+            - Dict of the system stack with OpticalMedium object keys and len=2 list of boundaries for respective
+              object including surroundings
+            - List of OpticalMedium object layers in order of stacking including surroundings
+            - Ndarray of the boundary (i.e. interface) z location between OpticalMedium objects, excluding +- infinite
+        4. Add surroundings to the bottom from z=system thickness to z= positive infinity
+
+        ### Paramaters
+        :param *args: A variable number of ordered pairs of OpticalMedium objects and their respective thickness (in
+        that order). The number of args input must be even.
         """
+
         assert len(args) % 2 == 0, "Arguments must be in groups of 2: medium object and thickness."
         self.surroundings = OpticalMedium(n=surrounding_n, type='surroundings')
 
@@ -39,9 +53,26 @@ class System:
         self.stack[(interface, float('inf'))] = self.surroundings
 
     def in_medium(self, location):
-        # Return the medium(s) that are at the queried coordinate. If the coordinate is an interface location, the
-        # mediums that makeup the interface are returned as a tuple, this includes boundary interfaces being returned
-        # with False on the surroundings side.
+        """
+        Return the medium(s) that are at the queried coordinate. If the coordinate is an interface location, the mediums
+        that makeup the interface are returned as a tuple, this includes boundary interfaces being returned with False
+        on the surroundings side.
+
+        ### Process
+        1. Get the z-coordinate form the input
+        2. Check it against boundaries of each medium of the system until it is found that either:
+            - It is between any of the boundaries, it is in the medium within those boundaries
+            - It is at a boundary, it is "in" the two mediums that make up that interface
+        3. Break and return the medium(s) of the queried point.
+
+        ### Parameters:
+        :param location: (tuple, list, ndarray, float, or int) The coordinates or z-coordinate to query.
+
+        ### Returns
+        :return in_: (medium or tuple of mediums): The medium of the queried z-coordinate or a tuple of interfaces if
+                     the coordinate is at an interface
+        """
+
         z = location[2] if isinstance(location, (tuple, list, np.ndarray)) else location
         for bound, medium in self.stack.items():
             if bound[0] < z < bound[1]:
@@ -55,6 +86,31 @@ class System:
         return in_
 
     def interface_crossed(self, location1, location2):
+        """
+        Determines the first interface crossed when moving between two locations, considering only the z-coordinates.
+
+        This method checks if any interface boundaries lie between the given z-coordinates. If an interface is crossed,
+        the method calculates its z-location and identifies the two mediums forming the interface.
+
+        ### Process:
+        1. Identify boundaries that fall between the start and end z-coordinates.
+        2. Compute the distance from the start z-coordinate to each boundary.
+        3. Apply a mask to filter boundaries that are actually crossed.
+        4. Select the closest crossed boundary as the interface plane.
+        5. Determine the two mediums making up the interface by slightly shifting the plane's z-coordinate:
+           - Backwards (toward the start) to find the first medium.
+           - Forwards (away from the start) to find the second medium.
+
+        ### Parameters:
+        - :param location1: Starting location of the query.
+        - :param location2: Ending location of the query.
+
+        ### Returns:
+        - :return interface: (tuple): The two media forming the crossed interface, or an empty list `[]` if no
+                              interface is crossed.
+        - :return plane: (float or bool): The z-coordinate of the crossed interface if one is found, otherwise `False`.
+        """
+
         # Get z coords
         z = []
         for location in [location1, location2]:
@@ -73,14 +129,18 @@ class System:
         # Sort for easier logic
         z_sorted = np.sort(z)
 
-        # Check if any boundaries fall between the zs
-        crossed = [z_sorted[0] < bound < z_sorted[1] for bound in self.boundaries]
+        # Check if any boundaries fall between the zs and put into nd boolean array to use as a mask
+        crossed = np.array([z_sorted[0] < bound < z_sorted[1] for bound in self.boundaries], dtype=bool)
 
         # Determine the distance of each boundary from the start coordinate
-        dist_from_start = np.abs(self.boundaries - z[0])
-        dist_from_start[[not cross for cross in crossed]] = float('inf')
-        plane = self.boundaries[crossed and dist_from_start == np.min(dist_from_start)][0] if not np.all(
-            dist_from_start == float('inf')) else False
+        dist_from_start = np.abs(self.boundaries - z[0], dtype=float)
+
+        dist_from_start[~crossed] = float('inf')  # Set uncrossed distance to inf so they are not considered
+        closest = np.argmin(dist_from_start)
+        if np.any(crossed):
+            plane = self.boundaries[np.argmin(dist_from_start)]
+        else:
+            plane = False
 
         # If an interface is crossed, get the two mediums
         interface = []
@@ -300,7 +360,7 @@ class OpticalMedium:
         self.mu_s = mu_s
         self.mu_a = mu_a
         self.g = g
-        self.color = display_color
+        self.display_color = display_color
 
     @property
     def mu_t(self):

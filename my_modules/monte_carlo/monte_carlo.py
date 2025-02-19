@@ -55,8 +55,9 @@ class System:
         # Last layer finish if not semi-infinite
         if interface < float('inf'):
             boundaries.append(interface)
-            self.boundaries = np.asarray(boundaries)
             self.stack[(interface, float('inf'))] = self.surroundings
+
+        self.boundaries = np.asarray(boundaries)
 
     def in_medium(self, location):
         """

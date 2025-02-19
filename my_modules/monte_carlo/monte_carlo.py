@@ -26,7 +26,8 @@ class System:
               object including surroundings
             - List of OpticalMedium object layers in order of stacking including surroundings
             - Ndarray of the boundary (i.e. interface) z location between OpticalMedium objects, excluding +- infinite
-        4. Add surroundings to the bottom from z=system thickness to z= positive infinity
+        4. Add surroundings to the bottom from z=system thickness to z= positive infinity if the last layer was not
+        semi-infinite
 
         ### Paramaters
         :param *args: A variable number of ordered pairs of OpticalMedium objects and their respective thickness (in
@@ -36,21 +37,26 @@ class System:
         assert len(args) % 2 == 0, "Arguments must be in groups of 2: medium object and thickness."
         self.surroundings = OpticalMedium(n=surrounding_n, type='surroundings')
 
-        # Stack layers
-        interface = 0
-        self.stack = {(float('-inf'), interface): self.surroundings}
-        self.layer = [self.surroundings]
-        boundaries = []
+        # Add surroundings from -inf to 0
+        interface = 0  # Current interface location during stacking
+        self.stack = {(float('-inf'), interface): self.surroundings}  # Dict with tuple layer boundaries: layer object
+        self.layer = [self.surroundings]  # List of layers in order of addition
+        boundaries = []  # List of boundary depths between layers
+
+        # Iterate through args to stack layers
         for i in range(0, len(args), 2):
-            self.stack[(interface, interface + args[i + 1])] = args[i]
+            d = args[i + 1]
+            d = float(d) if isinstance(d, str) else d
+            self.stack[(interface, interface + d)] = args[i]
             self.layer.append(args[i])
             boundaries.append(interface)
-            interface += args[i + 1]
+            interface += d
 
-        # Last layer finish
-        boundaries.append(interface)
-        self.boundaries = np.asarray(boundaries)
-        self.stack[(interface, float('inf'))] = self.surroundings
+        # Last layer finish if not semi-infinite
+        if interface < float('inf'):
+            boundaries.append(interface)
+            self.boundaries = np.asarray(boundaries)
+            self.stack[(interface, float('inf'))] = self.surroundings
 
     def in_medium(self, location):
         """

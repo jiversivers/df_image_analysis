@@ -201,9 +201,12 @@ class Photon:
         self.T = 0.0
         self.R = 0.0
 
-    def inject(self):
+    def simulate(self):
         assert self.system is not None, RuntimeError('Photon must be in an Optical System object to simulate.')
-        pass
+        while not self.is_terminated:
+            self.absorb()
+            self.move()
+            self.scatter()
 
     @property
     def weight(self):

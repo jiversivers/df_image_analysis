@@ -8,25 +8,66 @@ class Model:
     def fit(self, initials, method, threshold, max_iter):
         pass
 
+    def __call__(self, *args, **kwargs):
+        return self.function(*args, **kwargs)
 
-# TODO: Update default kwargs in calculate_mus to hold or load actual information for Hb.
-def calculate_mus(a, b, chb, alpha,
-                  wavelength=(400, 500, 600, 700), wavelength_0=650,
-                  hb=(0, 1), hbo2=(2, 3)):
-    wavelength = np.asarray(wavelength)  # wavelengths of measurements
-    hb = np.asarray(hb)  # extinction coefficient for deoxygenated hemoglobin
-    hbo2 = np.asarray(hbo2)  # extinction coefficient for oxygenated hemoglobin
 
-    chb = 0 if chb < 0 else chb
-    mu_s = (a * 10) * (wavelength / wavelength_0) ** -b  # Reduced scattering coefficient, cm^-1
-    mu_a = 2.303 * (chb * (alpha * hbo2 + (1 - alpha) * hb))  # Absorption coefficient, cm^-1
+def calculate_mus(a, b, ci, epsilons,
+                  wavelength=np.arange(400, 721, 10), wavelength0=650):
+    # Check cs and epsilons match up
+    msg = ('One alpha must be included for all species, but you gave {} ci and {} spectra. '
+           'In the case of only two species, the second alpha may be omitted')
+    try:
+        # Simple 1 to 1 ration of multiple in list-likes
+        if isinstance(ci, (list, tuple, np.ndarray)):
+            assert len(ci) == len(epsilons), AssertionError(msg.format(len(ci), len(wavelength)))
+        # or 1 ci and either a single list-like OR a one element list-like where that element is list-like
+        elif isinstance(ci, (int, float)):
+            if isinstance(epsilons[0], (list, tuple, np.ndarray)):
+                assert len(epsilons) == 1, AssertionError(msg.format(1, len(epsilons)))
+
+        # Check cs make sense
+        msg = 'Concentrations cannot be negative'
+        if isinstance(ci, (list, tuple, np.ndarray)):
+            assert np.all([c >= 0 for c in ci]), AssertionError(msg)
+        elif isinstance(ci, (int, float)):
+            assert ci >= 0, AssertionError(msg)
+
+        # Check that wavelengths and epsilons match up
+        msg = (f'A spectrum of molar absorptivity must be included with each spectrum. '
+               f'You gave {len(wavelength)} wavelengths but molar absorptivity had {len(epsilons[0])} elements.')
+        # Either each element of the epsilons has its own element for the wavelengths
+        if isinstance(epsilons[0], (list, tuple, np.ndarray)):
+            assert np.all([len(e) == len(wavelength) for e in epsilons]), AssertionError(msg)
+        # Or there is only one species, and it has its own elements for all wavelengths
+        elif isinstance(epsilons[0], (int, float)):
+            assert len(epsilons) == len(wavelength), AssertionError(msg)
+
+    except AssertionError as e:
+        raise ValueError(e)
+
+    wavelength = np.asarray(wavelength)  # Wavelengths of measurements (nm)
+    mu_s = a * (wavelength / wavelength0) ** -b  # Reduced scattering coefficient, cm^-1
+
+    # Unpack list of spectra (if it is a list)
+    if isinstance(epsilons[0], (tuple, list, np.ndarray)):
+        epsilons = np.asarray([np.asarray(spectrum) for spectrum in epsilons])  # Molar absorptivity (L/(mol cm))
+    else:
+        epsilons = np.asarray(epsilons)
+
+    # Reshape concentrations (if multiple)
+    if isinstance(ci, (list, tuple, np.ndarray)):
+        ci = np.asarray(ci)
+        ci = ci.reshape(-1, 1)
+
+    mu_a = np.log(10) * np.sum(ci * epsilons, axis=0)  # Absorption coefficient, cm^-1
     return mu_s, mu_a
 
 
 # TODO: Update default kwargs in diffusion approximation and determine how to handle RHO for multiple and non-normal
 #  beams.
 def diffusion_approximation(mu_s, mu_a,
-                            rho=2.25, n_tissue=1.4, n_collection=1):
+                            rho=2.25e-3, n_tissue=1.4, n_collection=1, g=None):
     # Optical properties (and derivatives)
     mu_t = mu_a + mu_s  # Total interaction coefficient, cm^-1
     mu_eff = np.sqrt(3 * mu_a * mu_t)  # In text (intro while discussing Patterson et al.)
@@ -73,5 +114,3 @@ def krogh_cylinder(T0, TR, R, r, x):
 def boltzmann_function(a1, a2, pO2, p50, dx):
     nadph_per = a2 + ((a1 + a2) / (1 + np.exp((pO2 - p50) ** dx)))
     return nadph_per
-
-

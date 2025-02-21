@@ -9,7 +9,6 @@ wl, hbo2, dhb = zip(*c.fetchall())
 # tHb = 4 and sO2 = 0.98
 tHb = 4
 sO2 = 0.98
-ci = (4 * sO2, 4 * (1 - sO2))
 
 
 class Model:
@@ -23,7 +22,10 @@ class Model:
         return self.function(*args, **kwargs)
 
 
-def calculate_mus(a, b, ci=ci, epsilons=(hbo2, dhb),
+def calculate_mus(a=1,
+                  b=1,
+                  ci=(4 * sO2, 4 * (1 - sO2)),
+                  epsilons=(hbo2, dhb),
                   wavelength=wl, wavelength0=650):
     # Check cs and epsilons match up
     msg = ('One alpha must be included for all species, but you gave {} ci and {} spectra. '
@@ -75,9 +77,11 @@ def calculate_mus(a, b, ci=ci, epsilons=(hbo2, dhb),
     return mu_s, mu_a
 
 
-# TODO: Update default kwargs in diffusion approximation and determine how to handle RHO for multiple and non-normal
-#  beams.
-def diffusion_approximation(mu_s, mu_a,
+# TODO: Determine how to handle RHO for multiple and non-normal beams.
+mu_s, mu_a = calculate_mus()
+
+
+def diffusion_approximation(mu_s=mu_s, mu_a=mu_a,
                             rho=2.25e-3, n_tissue=1.4, n_collection=1, g=None):
     # Optical properties (and derivatives)
     mu_t = mu_a + mu_s  # Total interaction coefficient, cm^-1

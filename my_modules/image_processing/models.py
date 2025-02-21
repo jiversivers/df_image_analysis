@@ -74,11 +74,11 @@ def calculate_mus(a=1,
         ci = ci.reshape(-1, 1)
 
     mu_a = np.log(10) * np.sum(ci * epsilons, axis=0)  # Absorption coefficient, cm^-1
-    return mu_s, mu_a
+    return mu_s, mu_a, wl
 
 
 # TODO: Determine how to handle RHO for multiple and non-normal beams.
-mu_s, mu_a = calculate_mus()
+mu_s, mu_a, wl = calculate_mus()
 
 
 def diffusion_approximation(mu_s=mu_s, mu_a=mu_a,

@@ -201,6 +201,10 @@ class Photon:
         self.T = 0.0
         self.R = 0.0
 
+    def inject(self):
+        assert self.system is not None, RuntimeError('Photon must be in an Optical System object to simulate.')
+        pass
+
     @property
     def weight(self):
         return self._weight

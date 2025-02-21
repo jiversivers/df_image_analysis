@@ -52,7 +52,11 @@ class System:
             boundaries.append(interface)
             interface += d
 
-        # Last layer finish if not semi-infinite
+        # Last layer finish
+        boundaries.append(interface)
+        self.boundaries = np.asarray(boundaries)
+
+        # Add surroundings if not semi-infinte
         if interface < float('inf'):
             boundaries.append(interface)
             self.stack[(interface, float('inf'))] = self.surroundings

@@ -1,7 +1,7 @@
 import itertools
 import sqlite3
 
-import my_modules.monte_carlo.monte_carlo as mc
+import my_modules.monte_carlo as mc
 from tqdm import tqdm
 
 try:
@@ -71,17 +71,7 @@ def main():
         # Make the system
         tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, type='tissue')
         system = mc.System(di_water, 0.01, tissue, d, surrounding_n=surroundings_n)
-        T, R, A = 3 * [0]
-
-        for i in range(n):
-            photon = mc.Photon(650, system=system)
-            while not photon.is_terminated:
-                photon.absorb()
-                photon.move()
-                photon.scatter()
-            T += photon.T
-            R += photon.R
-            A += photon.A
+        T, R, A, = mc.simulate(system, n=10000)
         # Add results to db
         c.execute(f"""
                     INSERT INTO mclut (

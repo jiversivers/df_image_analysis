@@ -30,4 +30,3 @@ def simulate(system, n=50000, photon=None):
         R += photon.R
         A += photon.A
     return T / n, R / n, A / n
-

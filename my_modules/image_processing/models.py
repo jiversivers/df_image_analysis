@@ -1,4 +1,15 @@
+import sqlite3
+
 import numpy as np
+
+conn = sqlite3.connect('database/hsdfm_data.db')
+c = conn.cursor()
+c.execute(f"SELECT * FROM hb_spectra")
+wl, hbo2, dhb = zip(*c.fetchall())
+# tHb = 4 and sO2 = 0.98
+tHb = 4
+sO2 = 0.98
+ci = (4 * sO2, 4 * (1 - sO2))
 
 
 class Model:
@@ -12,8 +23,8 @@ class Model:
         return self.function(*args, **kwargs)
 
 
-def calculate_mus(a, b, ci, epsilons,
-                  wavelength=np.arange(400, 721, 10), wavelength0=650):
+def calculate_mus(a, b, ci=ci, epsilons=(hbo2, dhb),
+                  wavelength=wl, wavelength0=650):
     # Check cs and epsilons match up
     msg = ('One alpha must be included for all species, but you gave {} ci and {} spectra. '
            'In the case of only two species, the second alpha may be omitted')

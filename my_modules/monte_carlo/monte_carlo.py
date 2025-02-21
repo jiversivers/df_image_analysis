@@ -1,13 +1,21 @@
 import sqlite3
 from matplotlib import pyplot as plt
+from numpy import iterable
+
+from my_modules.image_processing.models import calculate_mus
 
 try:
     import cupy as np
+
     if not np.is_available():
         raise RuntimeError("CUDA not available; reverting to NumPy.")
 except (ImportError, RuntimeError) as e:
     import numpy as np
+
     np.is_available = lambda: False  # Mock the `is_available` method for consistency
+
+# Get some default properties
+mu_s, mu_a, wl = calculate_mus()
 
 
 class System:
@@ -164,7 +172,7 @@ class System:
     def represent_on_axis(self, ax=None):
         if ax is None:
             ax = plt.gca()
-        ax.set_ylim([-0.1 * self.boundaries[-1], 1.1 *self.boundaries[-1]])
+        ax.set_ylim([-0.1 * self.boundaries[-1], 1.1 * self.boundaries[-1]])
         alpha = 0.0
         for bound, medium in self.stack.items():
             depth = np.diff(bound)
@@ -184,7 +192,8 @@ class Photon:
                  directional_cosines=(0, 0, 1),
                  location_coordinates=(0, 0, 0),
                  weight=1,
-                 russian_roulette_constant=20):
+                 russian_roulette_constant=20,
+                 recurse=True):
 
         # Init photon state
         self.wavelength = wavelength
@@ -194,6 +203,7 @@ class Photon:
         self.weight = weight
         self.russian_roulette_constant = russian_roulette_constant
         self._medium = None
+        self.recurse = recurse
 
         # Init trackers
         self.location_history = [self.location_coordinates]
@@ -250,7 +260,7 @@ class Photon:
         return medium
 
     def move(self, step=None):
-        mu_t = self.medium.mu_t
+        mu_t = self.medium.mu_t_at(self.wavelength)
         step = -np.log(np.random.rand()) / mu_t if step is None else step
         d_loc = step * self.directional_cosines
         new_coords = d_loc + self.location_coordinates
@@ -269,8 +279,8 @@ class Photon:
             self.refract(interface)
 
             # Move the rest, rescaling the remaining step for the new medium
-            step *= (1 - step_frac) * mu_t / self.medium.mu_t
-            mu_t = self.medium.mu_t
+            step *= (1 - step_frac) * mu_t / self.medium.mu_t_at(self.wavelength)
+            mu_t = self.medium.mu_t_at(self.wavelength)
             d_loc = step * self.directional_cosines
             new_coords = d_loc + self.location_coordinates
             interface, plane = self.system.interface_crossed(self.location_coordinates, new_coords)
@@ -303,17 +313,35 @@ class Photon:
             (interface[1].n - interface[0].n) /
             (interface[1].n + interface[0].n)
         ) ** 2
+
+        # Inject secondary photon to account for reflected portion with current direciton and location
+        if self.recurse:
+            secondary_photon = Photon(self.wavelength,
+                                      system=self.system,
+                                      directional_cosines=self.directional_cosines,
+                                      location_coordinates=self.location_coordinates,
+                                      weight=self.weight * specular_reflection,
+                                      russian_roulette_constant=20,
+                                      recurse=True)
+            secondary_photon.simulate()
+            self.T += secondary_photon.T
+            self.R += secondary_photon.R
+            self.A += secondary_photon.A
+
         # If the reflected fraction will be reflected out, add it to reflected count,
-        if self.directional_cosines[2] > 0:
-            self.R += self.weight * specular_reflection
-        # Else add it to transmitted
         else:
-            self.T += self.weight * specular_reflection
+            if self.directional_cosines[2] > 0:
+                self.R += self.weight * specular_reflection
+            # Else add it to transmitted
+            else:
+                self.T += self.weight * specular_reflection
+
         self.weight = self.weight * (1 - specular_reflection)
 
+    # TODO: Add support for fluorescence-based secondary photons
     def absorb(self):
-        self.A += self.weight * self.medium.albedo
-        self.weight = self.weight - (self.weight * self.medium.albedo)
+        self.A += self.weight * self.medium.albedo_at(self.wavelength)
+        self.weight = self.weight - (self.weight * self.medium.albedo_at(self.wavelength))
 
     def scatter(self):
         # Sample random scattering angles from distribution
@@ -371,14 +399,33 @@ class Photon:
 
 class OpticalMedium:
 
-    ## TODO: add metod for mu_s and mu_a to return coefficients as funcitons of photon wavelength
-    def __init__(self, n=1, mu_s=1, mu_a=0, g=1, type='default', display_color=None):
+    def __init__(self, n=1, mu_s=mu_s, mu_a=mu_a, wavelengths=wl, g=1,
+                 type='default', display_color=None):
         self.type = type
         self.n = n
-        self.mu_s = mu_s
-        self.mu_a = mu_a
+        self.mu_s = np.array(mu_s)
+        self.mu_a = np.array(mu_a)
+        self.wavelengths = np.array(wavelengths)
         self.g = g
         self.display_color = display_color
+
+    def _wave_index(self, wavelength):
+        if iterable(wavelength):
+            return [np.where(self.wavelengths == wl)[0][0] for wl in wavelength]
+        else:
+            return np.where(self.wavelengths == wavelength)[0][0]
+
+    def mu_s_at(self, wavelengths):
+        return self.mu_s[self._wave_index(wavelengths)]
+
+    def mu_a_at(self, wavelengths):
+        return self.mu_a[self._wave_index(wavelengths)]
+
+    def mu_t_at(self, wavelengths):
+        return self.mu_t[self._wave_index(wavelengths)]
+
+    def albedo_at(self, wavelengths):
+        return self.albedo[self._wave_index(wavelengths)]
 
     @property
     def mu_t(self):
@@ -420,8 +467,9 @@ def insert_into_mclut_database(simulation_parameters, simulation_results, db_fil
     conn.commit()
     conn.close()
 
+
 # TODO: Update to get all direction cosines after sampling gamma.
-def sample_illumination(diameters=(1.7, 2.0), d_i = 325, f=100):
+def sample_illumination(diameters=(1.7, 2.0), d_i=325, f=100):
     # Find the range of angles to sample
     phi = np.arctan(0.5 * np.asarray(diameters) / d_i * ((d_i / f) - 1))
     # Sample the range uniformly and convert to direciton cosine

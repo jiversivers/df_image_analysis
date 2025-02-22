@@ -410,22 +410,24 @@ class OpticalMedium:
         self.display_color = display_color
 
     def _wave_index(self, wavelength):
-        if iterable(wavelength):
+        if iterable(wavelength) and iterable(self.wavelengths):
             return [np.where(self.wavelengths == wl)[0][0] for wl in wavelength]
-        else:
+        elif iterable(self.wavelengths):
             return np.where(self.wavelengths == wavelength)[0][0]
+        else:
+            return 0
 
     def mu_s_at(self, wavelengths):
-        return self.mu_s[self._wave_index(wavelengths)]
+        return self.mu_s[self._wave_index(wavelengths)] if iterable(self.mu_s) else self.mu_s
 
     def mu_a_at(self, wavelengths):
-        return self.mu_a[self._wave_index(wavelengths)]
+        return self.mu_a[self._wave_index(wavelengths)] if iterable(self.mu_a) else self.mu_a
 
     def mu_t_at(self, wavelengths):
-        return self.mu_t[self._wave_index(wavelengths)]
+        return self.mu_t[self._wave_index(wavelengths)] if iterable(self.mu_t) else self.mu_t
 
     def albedo_at(self, wavelengths):
-        return self.albedo[self._wave_index(wavelengths)]
+        return self.albedo[self._wave_index(wavelengths)] if iterable(self.albedo) else self.albedo
 
     @property
     def mu_t(self):

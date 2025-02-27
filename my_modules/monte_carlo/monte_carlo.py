@@ -235,10 +235,10 @@ class Photon:
             self._weight = weight
 
     def russian_roulette(self):
-        if np.random.rand() < 1 / self.russian_roulette_constant:
-            self._weight = 0
+        if np.random.rand() > (1 / self.russian_roulette_constant):
+            self.weight = 0
         else:
-            self._weight * self.russian_roulette_constant
+            self._weight *= self.russian_roulette_constant
 
     @property
     def medium(self):
@@ -258,8 +258,7 @@ class Photon:
         while isinstance(medium, (list, tuple)):
             medium = self.system.in_medium(bumped_coords)
             # Increment coordinates smallest possible amount in same direction of the photon
-            bumped_coords = np.nextafter(self.location_coordinates,
-                                         np.finfo(np.float64).max * np.sign(self.directional_cosines))
+            bumped_coords = np.nextafter(bumped_coords, np.finfo(np.float64).max * np.sign(self.directional_cosines))
         return medium
 
     def move(self, step=None):
@@ -317,14 +316,16 @@ class Photon:
             (interface[1].n + interface[0].n)
         ) ** 2
 
+        reflected_weight = self.weight * specular_reflection
+
         # Inject secondary photon to account for reflected portion with current direciton and location
         if self.recurse:
             secondary_photon = Photon(self.wavelength,
                                       system=self.system,
                                       directional_cosines=self.directional_cosines,
                                       location_coordinates=self.location_coordinates,
-                                      weight=self.weight * specular_reflection,
-                                      russian_roulette_constant=20,
+                                      weight=reflected_weight,
+                                      russian_roulette_constant=self.russian_roulette_constant,
                                       recurse=True)
             secondary_photon.simulate()
             self.T += secondary_photon.T
@@ -334,17 +335,18 @@ class Photon:
         # If the reflected fraction will be reflected out, add it to reflected count,
         else:
             if self.directional_cosines[2] > 0:
-                self.R += self.weight * specular_reflection
+                self.R += reflected_weight
             # Else add it to transmitted
-            else:
-                self.T += self.weight * specular_reflection
+            elif self.directional_cosines[2] < 0:
+                self.T += reflected_weight
 
-        self.weight = self.weight * (1 - specular_reflection)
+        self.weight = self.weight - reflected_weight
 
     # TODO: Add support for fluorescence-based secondary photons
     def absorb(self):
-        self.A += self.weight * self.medium.albedo_at(self.wavelength)
-        self.weight = self.weight - (self.weight * self.medium.albedo_at(self.wavelength))
+        absorbed_weight = self.weight * self.medium.albedo_at(self.wavelength)
+        self.A += absorbed_weight
+        self.weight = self.weight - absorbed_weight
 
     def scatter(self):
         # Sample random scattering angles from distribution
@@ -378,7 +380,7 @@ class Photon:
         self.directional_cosines /= np.linalg.norm(self.directional_cosines)
 
     def plot_path(self, project_onto=None, axes=None, ignore_outside=True):
-        project_onto = ['xz', 'yz', 'xy'] if project_onto == 'all' else project_onto
+        project_onto = ['xz', 'yz', 'xy'] if project_onto == 'all' or project_onto is None else project_onto
         project_onto = [project_onto] if not isinstance(project_onto, (list, tuple)) else project_onto
         data = {'x': [], 'y': [], 'z': []}
         for loc in self.location_history:
@@ -389,6 +391,7 @@ class Photon:
             data['z'].append(loc[2])
 
         (_, axes) = plt.subplots(1, len(project_onto), figsize=(24, 6)) if axes is None else ([], axes)
+        axes = [axes] if len(project_onto) == 1 else axes
         for ax, projection in zip(axes, project_onto):
             x = data[projection[0]]
             y = data[projection[1]]

@@ -200,10 +200,13 @@ class Photon:
         self.system = system
         self.directional_cosines = np.asarray(directional_cosines, dtype=np.float64)
         self.location_coordinates = np.asarray(location_coordinates, dtype=np.float64)
-        self.weight = weight
+        self._weight = weight
         self.russian_roulette_constant = russian_roulette_constant
         self._medium = None
         self.recurse = recurse
+
+        # Call setter in case photon is DOA
+        self.weight = weight
 
         # Init trackers
         self.location_history = [self.location_coordinates]

@@ -2,12 +2,13 @@ import sqlite3
 
 import numpy as np
 
-conn = sqlite3.connect('databases/hsdfm_data.db')
+conn = sqlite3.connect(r'C:\Users\jdivers\PycharmProjects\df_image_analysis\databases\hsdfm_data.db')
 c = conn.cursor()
 c.execute(f"SELECT * FROM hb_spectra")
 wl, hbo2, dhb = zip(*c.fetchall())
 # tHb = 4 and sO2 = 0.98
 tHb = 4
+tHb /= 64500  # molar mass of hemoglobin
 sO2 = 0.98
 
 
@@ -24,14 +25,15 @@ class Model:
 
 def calculate_mus(a=1,
                   b=1,
-                  ci=(4 * sO2, 4 * (1 - sO2)),
+                  ci=(tHb * sO2, tHb * (1 - sO2)),
                   epsilons=(hbo2, dhb),
-                  wavelength=wl, wavelength0=650):
+                  wavelength=wl, wavelength0=650,
+                  force_feasible=True):
     # Check cs and epsilons match up
     msg = ('One alpha must be included for all species, but you gave {} ci and {} spectra. '
            'In the case of only two species, the second alpha may be omitted')
     try:
-        # Simple 1 to 1 ration of multiple in list-likes
+        # Simple 1 to 1 ratio of multiple in list-likes
         if isinstance(ci, (list, tuple, np.ndarray)):
             assert len(ci) == len(epsilons), AssertionError(msg.format(len(ci), len(wavelength)))
         # or 1 ci and either a single list-like OR a one element list-like where that element is list-like
@@ -40,11 +42,12 @@ def calculate_mus(a=1,
                 assert len(epsilons) == 1, AssertionError(msg.format(1, len(epsilons)))
 
         # Check cs make sense
-        msg = 'Concentrations cannot be negative'
-        if isinstance(ci, (list, tuple, np.ndarray)):
-            assert np.all([c >= 0 for c in ci]), AssertionError(msg)
-        elif isinstance(ci, (int, float)):
-            assert ci >= 0, AssertionError(msg)
+        if force_feasible:
+            msg = 'Concentrations cannot be negative'
+            if isinstance(ci, (list, tuple, np.ndarray)):
+                assert np.all([c >= 0 for c in ci]), AssertionError(msg)
+            elif isinstance(ci, (int, float)):
+                assert ci >= 0, AssertionError(msg)
 
         # Check that wavelengths and epsilons match up
         msg = (f'A spectrum of molar absorptivity must be included with each spectrum. '

@@ -186,6 +186,7 @@ class System:
                             alpha=alpha if medium.color is None else 1)
 
 
+# TODO: Add copy funciton so the starting setup of a current_photon can be re-used when a current_photon is passed to monte_carlo.simulate
 class Photon:
     def __init__(self, wavelength,
                  system=None,
@@ -195,7 +196,7 @@ class Photon:
                  russian_roulette_constant=20,
                  recurse=True):
 
-        # Init photon state
+        # Init current_photon state
         self.wavelength = wavelength
         self.system = system
         self.directional_cosines = np.asarray(directional_cosines, dtype=np.float64)
@@ -205,7 +206,7 @@ class Photon:
         self._medium = None
         self.recurse = recurse
 
-        # Call setter in case photon is DOA
+        # Call setter in case current_photon is DOA
         self.weight = weight
 
         # Init trackers
@@ -213,6 +214,18 @@ class Photon:
         self.A = 0.0
         self.T = 0.0
         self.R = 0.0
+
+    def copy(self):
+        copy = self.__class__(self.wavelength,
+                              system=self.system,
+                              directional_cosines=self.directional_cosines,
+                              location_coordinates=self.location_coordinates,
+                              weight=self.weight,
+                              russian_roulette_constant=self.russian_roulette_constant,
+                              recurse=self.recurse)
+        for key, val in self.__dict__.items():
+            setattr(copy, key, val)
+        return copy
 
     def simulate(self):
         assert self.system is not None, RuntimeError('Photon must be in an Optical System object to simulate.')
@@ -257,7 +270,7 @@ class Photon:
         medium = []
         while isinstance(medium, (list, tuple)):
             medium = self.system.in_medium(bumped_coords)
-            # Increment coordinates smallest possible amount in same direction of the photon
+            # Increment coordinates smallest possible amount in same direction of the current_photon
             bumped_coords = np.nextafter(bumped_coords, np.finfo(np.float64).max * np.sign(self.directional_cosines))
         return medium
 
@@ -306,7 +319,7 @@ class Photon:
         # Snell's law
         else:
             self.directional_cosines[2] = np.sign(self.directional_cosines[2]) * np.sqrt(1 - sin_theta_t ** 2)
-        self.directional_cosines /= np.linalg.norm(self.directional_cosines)
+        # self.directional_cosines /= np.linalg.norm(self.directional_cosines)
 
     # For simplicity, the reflected fraction will not be tracked any further for now (to avoid recursive photons). It
     # will just be simplified to continue in the exact same direction to infinity
@@ -318,7 +331,7 @@ class Photon:
 
         reflected_weight = self.weight * specular_reflection
 
-        # Inject secondary photon to account for reflected portion with current direciton and location
+        # Inject secondary current_photon to account for reflected portion with current direciton and location
         if self.recurse:
             secondary_photon = Photon(self.wavelength,
                                       system=self.system,
@@ -424,16 +437,24 @@ class OpticalMedium:
             return 0
 
     def mu_s_at(self, wavelengths):
-        return self.mu_s[self._wave_index(wavelengths)] if iterable(self.mu_s) else self.mu_s
+        if iterable(self.mu_s):
+            return np.interp(wavelengths, self.wavelengths, self.mu_s)
+        return mu_s
 
     def mu_a_at(self, wavelengths):
-        return self.mu_a[self._wave_index(wavelengths)] if iterable(self.mu_a) else self.mu_a
+        if iterable(self.mu_a):
+            return np.interp(wavelengths, self.wavelengths, self.mu_a)
+        return self.mu_a
 
     def mu_t_at(self, wavelengths):
-        return self.mu_t[self._wave_index(wavelengths)] if iterable(self.mu_t) else self.mu_t
+        if iterable(self.mu_t):
+            return np.interp(wavelengths, self.wavelengths, self.mu_t)
+        return self.mu_t
 
     def albedo_at(self, wavelengths):
-        return self.albedo[self._wave_index(wavelengths)] if iterable(self.albedo) else self.albedo
+        if iterable(self.albedo):
+            return np.interp(wavelengths, self.wavelengths, self.albedo)
+        return self.albedo
 
     @property
     def mu_t(self):
@@ -444,9 +465,6 @@ class OpticalMedium:
         return self.mu_a / self.mu_t
 
 
-# TODO: write function to take data from the MC simulation and insert into a database to be used at fitting. This should
-#  include overwrite options for when simulation parameters match what has already been inserted, in the case of
-#  updates.
 def insert_into_mclut_database(simulation_parameters, simulation_results, db_file='mclut.db'):
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
@@ -476,10 +494,82 @@ def insert_into_mclut_database(simulation_parameters, simulation_results, db_fil
     conn.close()
 
 
-# TODO: Update to get all direction cosines after sampling gamma.
-def sample_illumination(diameters=(1.7, 2.0), d_i=325, f=100):
-    # Find the range of angles to sample
-    phi = np.arctan(0.5 * np.asarray(diameters) / d_i * ((d_i / f) - 1))
-    # Sample the range uniformly and convert to direciton cosine
-    gamma = np.cos(np.random.uniform(*phi))
-    return gamma
+def sample_spectrum(wavelengths, spectrum):
+    # Normalize PDF
+    spectrum /= np.sum(spectrum)
+
+    # Compute CDF
+    cdf = np.cumsum(spectrum)
+
+    # Take random sample
+    i = np.random.uniform(0, 1)
+
+    # Interpolate value of sample from CDF
+    return np.interp(i, cdf, wavelengths)
+
+
+def ring_pattern(r_min, r_max, angle_min, angle_max):
+    def sampler():
+        # Sample angle and radius for starting location
+        phi = np.random.uniform(0, 2 * np.pi)
+        r = np.sqrt(np.random.uniform(r_min ** 2, r_max ** 2))
+
+        # Create ring
+        x = r * np.cos(phi)
+        y = r * np.sin(phi)
+        location = (x, y, 0)
+
+        # Sample injection angles directional cosines
+        theta = np.random.uniform(angle_min, angle_max)
+
+        # Compute directional cosines
+        mu_x = np.sin(theta) * np.cos(phi)
+        mu_y = np.sin(theta) * np.sin(phi)
+        mu_z = np.cos(theta)
+        directional_cosines = (mu_x, mu_y, mu_z)
+
+        return location, directional_cosines
+
+    return sampler
+
+
+def cone_of_acceptance(r, mu_z=None, NA=1, n=1.33):
+    def acceptor(x, y, mu_z=None):
+        if mu_z is not None:
+            theta_max = np.arcsin(NA / n)
+            mu_z_max = np.cos(theta_max)
+        r_test = np.sqrt(x ** 2 + y ** 2)
+        outside = r_test > r
+        return not (mu_z > mu_z_max or outside)
+
+    return acceptor
+
+
+class Illumination:
+    def __init__(self,
+                 pattern=ring_pattern(1.6443276801785274, 3.205672319821467, np.arctan(-2.5 / 2)),
+                 spectrum=None):
+        self.pattern = pattern
+        self.spectrum = spectrum
+
+    def photon(self):
+        location, direciton = self.pattern()
+        wavelength = sample_spectrum(self.spectrum) if self.spectrum else None
+        return Photon(wavelength, location=location, directional_cosines=direciton)
+
+
+class Detector:
+    def __init__(self, acceptor=cone_of_acceptance(1.6443276801785274)):
+        self.acceptor = acceptor
+        self.n = 0
+
+    def detected(self, test_case, weight=None):
+        if not isinstance(test_case, Photon):
+            location, direciton = test_case
+            weight = 1
+        else:
+            location = test_case.location_coordinates[1:]
+            direciton = test_case.directional_cosines[2]
+            weight = test_case.weight
+        self.n += weight
+        return self.acceptor(*location, mu_z=direciton)

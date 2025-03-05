@@ -16,18 +16,21 @@ except (ImportError, RuntimeError) as e:
 
 print(f"Using {np.__name__}")
 
+
 def main():
     # Init parameter sets
     mu_s_array = np.arange(0, 101, 5)
     mu_a_array = np.arange(1, 102, 5)
-    g_array = [0.8, 0.85, 0.9]
+    g_array = [0.9]
     d_array = [float('inf')]  # Fix as semi-infinite
     n = 50000
     tissue_n = 1.33
     surroundings_n = 1
+    recurse = True
 
     # Make water medium
     di_water = mc.OpticalMedium(n=1, mu_s=0.003, mu_a=0, g=0, type='di water')
+    glass = mc.OpticalMedium(n=1.515, mu_s=0.003, mu_a=0, g=0, type='glass')
 
     # Simulate
     conn = sqlite3.connect('databases/hsdfm_data.db')
@@ -56,13 +59,15 @@ def main():
     water_mu_a REAL NOT NULL,
     tissue_n REAL NOT NULL,
     surroundings_n REAL NOT NULL,
-    recursive BOOLEAN DEFAULT FALSE)""")
+    recursive BOOLEAN DEFAULT FALSE,
+    cover_glass BOOLEAN DEFAULT FALSE)""")
 
     c.execute(f"""
     INSERT INTO mclut_simulations (
-    photon_count, dimensionality, water_n, water_mu_s, water_mu_a, tissue_n, surroundings_n
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)""", (
-        n, 1, float(di_water.n), float(di_water.mu_s), float(di_water.mu_a), float(tissue_n), float(surroundings_n)
+    photon_count, dimensionality, water_n, water_mu_s, water_mu_a, tissue_n, surroundings_n, recursive, cover_glass
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+        n, 1, float(di_water.n), float(di_water.mu_s), float(di_water.mu_a), float(tissue_n), float(surroundings_n),
+        recurse, True if 'glass' in locals() else False
     ))
     conn.commit()
     simulation_id = c.lastrowid
@@ -72,20 +77,18 @@ def main():
                                    total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array)):
         # Make the system
         tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, type='tissue')
-        system = mc.System(di_water, 0.01, tissue, d, surrounding_n=surroundings_n)
+        system = mc.System(di_water, 0.1,  # 1mm
+                           glass, 0.017,  # 0.17mm
+                           tissue, d,
+                           surrounding_n=surroundings_n)
         T, R, A = 3 * [0]
 
         for i in range(n):
-            photon = mc.Photon(650, system=system, recurse=True)
-            while not photon.is_terminated:
-                photon.absorb()
-                photon.move()
-                photon.scatter()
+            photon = mc.Photon(650, system=system, recurse=recurse)
+            photon.simulate()
             T += photon.T
             R += photon.R
             A += photon.A
-        print(f'\nmu_s: {mu_s}, mu_a: {mu_a}, g: {g}, d: {d}\n'
-              f'T: {100 * T / n}%, R: {100 * R / n}%, A: {100 * A / n}\n%')
 
         # Add results to db
         c.execute(f"""
@@ -95,6 +98,7 @@ def main():
             float(mu_s), float(mu_a), float(g), float(d), float(T / n), float(R / n), float(A / n), simulation_id
         ))
     conn.commit()
+
 
 if __name__ == '__main__':
     main()

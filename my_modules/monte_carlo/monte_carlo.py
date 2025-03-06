@@ -201,6 +201,7 @@ class Photon:
         self.system = system
         self.directional_cosines = np.asarray(directional_cosines, dtype=np.float64)
         self.location_coordinates = np.asarray(location_coordinates, dtype=np.float64)
+        self.exit_location = None
         self._weight = weight
         self.russian_roulette_constant = russian_roulette_constant
         self._medium = None
@@ -297,8 +298,16 @@ class Photon:
             step *= (1 - step_frac) * mu_t / self.medium.mu_t_at(self.wavelength)
             mu_t = self.medium.mu_t_at(self.wavelength)
             d_loc = step * self.directional_cosines
+
+            # Save previous to last position in case of exit on next
+            self.exit_location = new_coords
             new_coords = d_loc + self.location_coordinates
             interface, plane = self.system.interface_crossed(self.location_coordinates, new_coords)
+
+        # If the photon did not exit, reset the exit location
+        if self.system.boundaries[-1] > new_coords[2] > self.system.boundaries[0]:
+            self.exit_location = None
+
         # Final non-crossing move
         self.location_coordinates = new_coords
         self.location_history.append(new_coords)
@@ -508,7 +517,25 @@ def sample_spectrum(wavelengths, spectrum):
     return np.interp(i, cdf, wavelengths)
 
 
-def ring_pattern(r_min, r_max, angle_min, angle_max):
+def ring_pattern(r_bounds, angle_bounds):
+    if not iterable(r_bounds):
+        r_max = r_bounds
+        r_min = 0
+    elif len(r_bounds) == 1:
+        r_max = r_bounds[0]
+        r_min = 0
+    else:
+        r_min, r_max = r_bounds
+
+    if not iterable(angle_bounds):
+        angle_min = angle_bounds
+        angle_max = angle_bounds
+    elif len(angle_bounds) == 1:
+        angle_min = angle_bounds[0]
+        angle_max = angle_bounds[0]
+    else:
+        angle_min, angle_max = angle_bounds
+
     def sampler():
         # Sample angle and radius for starting location
         phi = np.random.uniform(0, 2 * np.pi)
@@ -547,7 +574,7 @@ def cone_of_acceptance(r, mu_z=None, NA=1, n=1.33):
 
 class Illumination:
     def __init__(self,
-                 pattern=ring_pattern(1.6443276801785274, 3.205672319821467, np.arctan(-2.5 / 2)),
+                 pattern=ring_pattern((1.6443276801785274, 3.205672319821467), np.arctan(-2.5 / 2)),
                  spectrum=None):
         self.pattern = pattern
         self.spectrum = spectrum
@@ -566,7 +593,7 @@ class Detector:
     def detected(self, test_case, weight=None):
         if not isinstance(test_case, Photon):
             location, direciton = test_case
-            weight = 1
+            weight = weight if weight is not None else 1
         else:
             location = test_case.location_coordinates[1:]
             direciton = test_case.directional_cosines[2]

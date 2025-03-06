@@ -1,8 +1,8 @@
 import sqlite3
 
 import numpy as np
-from scipy.interpolate import CubicSpline, RegularGridInterpolator
-from .monte_carlo import Photon, OpticalMedium, System
+from scipy.interpolate import RegularGridInterpolator
+from .monte_carlo import Photon, OpticalMedium, System, Illumination, Detector
 
 # Setup default database and MCLUT version
 conn = sqlite3.connect(r'C:\Users\jdivers\PycharmProjects\df_image_analysis\databases\hsdfm_data.db')
@@ -13,9 +13,8 @@ simulation_id = c.fetchone()[0]
 
 def lookup(mu_s, mu_a, g, depth,
            conn=conn, simulation_id=None, save_sim=True, force_simulate=False, skip_simulation=False):
-    assert (
-        not (force_simulate and skip_simulation),
-        'It is ambiguous to set both skip_simulation and force_simulate to TRUE.')
+    assert not (force_simulate and skip_simulation), ('It is ambiguous to set both skip_simulation and force_simulate '
+                                                      'to TRUE.')
 
     # If simulation_id is NONE, default to most recent
     if simulation_id is None:

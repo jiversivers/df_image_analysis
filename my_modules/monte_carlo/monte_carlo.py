@@ -582,7 +582,7 @@ class Illumination:
     def photon(self):
         location, direciton = self.pattern()
         wavelength = sample_spectrum(self.spectrum) if self.spectrum else None
-        return Photon(wavelength, location=location, directional_cosines=direciton)
+        return Photon(wavelength, location_coordinates=location, directional_cosines=direciton)
 
 
 class Detector:

@@ -215,6 +215,11 @@ class IndexableProperty(np.ndarray):
         obj /= np.linalg.norm(obj) if normalize else 1
         return obj
 
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return None
+        self._normalize = getattr(obj, '_normalize', False)
+
     @property
     def normalize(self):
         return self._normalize
@@ -362,10 +367,15 @@ class Photon:
 
         # If an interface is crossed
         interface, plane = self.system.interface_crossed(self.location_coordinates, new_coords)
+        iter_count = 0
         while interface and plane is not None:
             # Update new_coords by the fraction of the step to the interface
             step_frac = (plane - self.location_coordinates[2]) / d_loc[2]
             new_coords = self.location_coordinates + step_frac * d_loc
+            if np.isclose(step_frac, 0):
+                new_coords[2] = plane
+                step_frac = 0
+
             self.location_coordinates = new_coords
             self.location_history.append(new_coords)
             exit_direction = self.directional_cosines

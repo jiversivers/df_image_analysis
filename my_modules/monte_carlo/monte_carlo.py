@@ -521,7 +521,7 @@ class Photon:
                 ax.set_title(f'Projected onto {projection}-plane')
                 ax.set_xlabel(f'Photon Displacement in {projection[0]}-direction (cm)')
                 ax.set_ylabel(f'Photon Displacement in {projection[1]}-direction (cm)')
-                if projection[1] == 'z':
+                if projection[1] == 'z' and not ax.yaxis_inverted():
                     ax.invert_yaxis()
         else:
             axes = fig.add_subplot(projection='3d') if axes is None else axes
@@ -530,6 +530,8 @@ class Photon:
             axes.set(xlabel=f'Photon Displacement in x-direction (cm)')
             axes.set(ylabel=f'Photon Displacement in y-direction (cm)')
             axes.set(zlabel=f'Photon Displacement in z-direction (cm)')
+            if not axes.zaxis_inverted():
+                axes.invert_zaxis()
 
         return fig, axes
 

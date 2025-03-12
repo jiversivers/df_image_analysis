@@ -416,24 +416,29 @@ class Photon:
                 self.weight = 0
             elif self.location_coordinates[2] > self.system.boundaries[-1]:
                 self.T += self.weight
-                self.T += self.weight
                 self.weight = 0
 
     def refract(self, interface):
-        sin_theta_t = (interface[0].n / interface[1].n) * np.sqrt(1 - self.directional_cosines[2] ** 2)
+        mu_x, mu_y, mu_z = self.directional_cosines
+        n1_n2 = (interface[0].n / interface[1].n)
+        sin_theta_t = n1_n2 * np.sqrt(1 - mu_z ** 2)
 
-        # Critical angle reflection
-        new_directional_cosines = np.array([0, 0, 0], dtype=np.float64)
+        # Update directions
+        # Critical angle TIR
         if sin_theta_t > 1:
-            new_directional_cosines[2] = -self.directional_cosines[2]
+            mu_z = -self.directional_cosines[2]
             self.tir_count += 1
             if self.tir_count > self.tir_limit:
                 self.A += self.weight
                 self.weight = 0
         # Snell's law
         else:
-            new_directional_cosines[2] = np.sign(self.directional_cosines[2]) * np.sqrt(1 - sin_theta_t ** 2)
-        self.directional_cosines = new_directional_cosines
+            mu_x *= n1_n2
+            mu_y *= n1_n2
+            mu_z = np.sign(mu_z) * np.sqrt(1 - sin_theta_t ** 2)
+
+        # Send to setter for normalization
+        self.directional_cosines = [mu_x, mu_y, mu_z]
 
     # For simplicity, the reflected fraction will not be tracked any further for now (to avoid recursive photons). It
     # will just be simplified to continue in the exact same direction to infinity
@@ -506,7 +511,7 @@ class Photon:
             new_directional_cosines[1] = (np.sin(theta) * (numr2 / deno)) + (mu_y * np.cos(theta))
             new_directional_cosines[2] = -(np.sin(theta) * np.cos(phi) * deno) + mu_z * np.cos(theta)
 
-        # update directional cosines with new direciton (done at once for normalization consistency)
+        # Update directional cosines with new direciton (done at once for normalization consistency)
         self.directional_cosines = new_directional_cosines
 
     def plot_path(self, project_onto=None, axes=None, ignore_outside=True):

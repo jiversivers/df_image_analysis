@@ -1,4 +1,5 @@
 import sqlite3
+import warnings
 
 from matplotlib import pyplot as plt, animation
 from numpy import iterable
@@ -11,7 +12,7 @@ try:
 
     if not np.is_available():
         raise RuntimeError("CUDA not available; reverting to NumPy.")
-except (ImportError, RuntimeError) as e:
+except (ImportError, RuntimeError):
     import numpy as np
 
     np.is_available = lambda: False  # Mock the `is_available` method for consistency
@@ -49,7 +50,7 @@ class System:
         self.detector_location = detector[1]
 
         assert len(args) % 2 == 0, "Arguments must be in groups of 2: medium object and thickness."
-        self.surroundings = OpticalMedium(n=surrounding_n, mu_s=0, mu_a=0.001, type='surroundings')
+        self.surroundings = OpticalMedium(n=surrounding_n, mu_s=0, mu_a=0, type='surroundings')
 
         # Add surroundings from -inf to 0
         interface = 0  # Current interface location during stacking
@@ -106,15 +107,21 @@ class System:
         """
 
         z = location[2] if iterable(location) else location
+        if z == float('-inf'):
+            return self.layer[0]
+        elif z == float('inf'):
+            return self.layer[-1]
+
         for bound, medium in self.stack.items():
             if bound[0] < z < bound[1]:
                 in_ = medium
                 break
             elif z == bound[0]:
                 # Determine the mediums on either side by simply bumping the coordinates forward and backward slightly
-                in_ = (self.in_medium(np.nextafter(z, float('-inf'))),
-                       self.in_medium(np.nextafter(z, float('inf')))
-                       )
+                in_ = (
+                    self.in_medium(np.nextafter(z, float('-inf'))),
+                    self.in_medium(np.nextafter(z, float('inf')))
+                )
                 break
         return in_
 
@@ -238,6 +245,7 @@ class IndexableProperty(np.ndarray):
 
 
 class Photon:
+
     def __init__(self, wavelength,
                  system=None,
                  directional_cosines=(0, 0, 1),
@@ -246,7 +254,8 @@ class Photon:
                  russian_roulette_constant=20,
                  recurse=True,
                  recursion_depth=0,
-                 recursion_limit=100,
+                 recursion_limit=10000,
+                 keep_secondary_photons=False,
                  tir_limit=float('inf')):
 
         # Init current_photon state
@@ -264,10 +273,10 @@ class Photon:
         self.recursion_depth = recursion_depth
         self.recursion_limit = recursion_limit
         self.recursed_photons = 0
+        self.keep_secondary_photons = keep_secondary_photons
+        self.secondary_photons = []
         self.tir_limit = tir_limit
         self.tir_count = 0
-
-        assert self.recursion_depth < recursion_limit, RuntimeError('Maximum photon recursion depth reached.')
 
         # Call setter in case current_photon is DOA
         self.weight = weight
@@ -313,6 +322,19 @@ class Photon:
 
     def simulate(self):
         assert self.system is not None, RuntimeError('Photon must be in an Optical System object to simulate.')
+        if self.recursion_depth >= self.recursion_limit:
+            if not self.throw_reursion_error:
+                self.recurse = False
+                warnings.warn(
+                    'Maximum recursion depth reached. Simulating deep photon with no recursion.\n'
+                    'To throw and error at maximum depth instead, set throw_recursion_error to TRUE. This will throw an'
+                    ' RecursionError instead of simulating without recursion.')
+            else:
+                RecursionError(
+                    'Maximum photon recursion limit reached. Recursion depth limit can be increased with the '
+                    'recursion_limit attribute.\n'
+                    'To switch this error off and throw a warning instead, set throw_recursion_error to FALSE. This '
+                    'will simulate the photon at the limit without recursion, rather than throwing an error.')
         while not self.is_terminated:
             self.absorb()
             self.move()
@@ -346,7 +368,12 @@ class Photon:
 
     @property
     def is_terminated(self):
-        return (self.medium == self.system.surroundings or self.weight <= 0.0)
+        self._is_terminated = (self.medium == self.system.surroundings or self.weight <= 0.0)
+        return self._is_terminated
+
+    @is_terminated.setter
+    def is_terminated(self, value):
+        self._is_terminated = value
 
     @property
     def headed_into(self):
@@ -355,68 +382,66 @@ class Photon:
         while isinstance(medium, (list, tuple)):
             medium = self.system.in_medium(bumped_coords)
             # Increment coordinates smallest possible amount in same direction of the current_photon
-            bumped_coords = np.nextafter(bumped_coords, float('inf') * self.directional_cosines)
+            bumped_coords = np.nextafter(bumped_coords, bumped_coords + self.directional_cosines)
         return medium
 
     def move(self, step=None):
-        mu_t = self.medium.mu_t_at(self.wavelength)
-        step = -np.log(np.random.rand()) / mu_t if step is None else step
-        d_loc = step * self.directional_cosines
-        new_coords = d_loc + self.location_coordinates
-
-        # Temporarily store direction in case of exit
-        exit_direction = self.directional_cosines
-
-        # If an interface is crossed
-        interface, plane = self.system.interface_crossed(self.location_coordinates, new_coords)
-        iter_count = 0
-        while interface and plane is not None:
-            # Update new_coords by the fraction of the step to the interface
-            step_frac = (plane - self.location_coordinates[2]) / d_loc[2]
-            new_coords = self.location_coordinates + step_frac * d_loc
-            if np.isclose(step_frac, 0):
-                new_coords[2] = plane
-                step_frac = 0
-
-            self.location_coordinates = new_coords
-            self.location_history.append(new_coords)
-            exit_direction = self.directional_cosines
-
-            # Reflect and refract
-            self.reflect_refract(interface)
-
-            # Rescaling the remaining step for the new medium and update
-            step *= (1 - step_frac) * mu_t / self.medium.mu_t_at(self.wavelength)
+        while True:
+            # Get current state
             mu_t = self.medium.mu_t_at(self.wavelength)
-            d_loc = step * self.directional_cosines
+            dir_cos = self.directional_cosines
+            loc = self.location_coordinates
 
-            # Calculate next position and check for crossing
-            new_coords = d_loc + self.location_coordinates
+            # Compute propagation step
+            if mu_t > 0:
+                # If scattering occurs, step is sampled from the distribution
+                step = -np.log(np.random.random()) / mu_t if step is None else step
+            else:
+                # If in a medium with mu_t = 0, force move to next interface
+                step = float('inf')
 
-            # If not crossed, plane is false and interface is empty.
-            interface, plane = self.system.interface_crossed(self.location_coordinates, new_coords)
+            # Compute intersection with next interface
+            interface, plane = self.system.interface_crossed(loc, loc + step * dir_cos)
 
-        # Final non-crossing move
-        self.location_coordinates = new_coords
-        self.location_history.append(new_coords)
+            if interface and plane is not None:
+                # Compute step to interface
+                interface_step = (plane - loc[2]) / dir_cos[2] if dir_cos[2] != 0 else float('inf')
 
-        # If the photon exits, set the exit location and direction
+                if interface_step < step:
+                    # Move to the interface
+                    self.location_coordinates = loc + interface_step * dir_cos
+                    self.location_history.append(self.location_coordinates)
+
+                    # Handle reflection/refraction
+                    self.reflect_refract(interface)
+
+                    # Restart loop
+                    step = None
+                    continue
+
+            # If no interface is crossed, update location and break loop
+            self.location_coordinates = loc + step * dir_cos
+            self.location_history.append(self.location_coordinates)
+            break
+
+        # Check termination (exiting the system)
         if not (self.system.boundaries[0] < self.location_coordinates[2] < self.system.boundaries[-1]):
-            self.exit_location = self.location_history[-2]
-            self.exit_direction = exit_direction
+            self.exit_location = self.location_history[-2] if len(
+                self.location_history) > 1 else self.location_coordinates
             self.exit_weight = self.weight
 
-            # Query the detector
-            if self.system.detector is not None and self.exit_location[2] == self.system.detector_location:
+            # Detector check
+            if self.system.detector and self.exit_location[2] == self.system.detector_location:
                 self.system.detector(self)
 
-            # Increment counters based on exit direction
-            if self.location_coordinates[2] < self.system.boundaries[0]:
+            # Reflection or transmission
+            if self.location_coordinates[2] < self.system.boundaries[0]:  # Reflection
                 self.R += self.weight
-                self.weight = 0
-            elif self.location_coordinates[2] > self.system.boundaries[-1]:
+            elif self.location_coordinates[2] > self.system.boundaries[-1]:  # Transmission
                 self.T += self.weight
-                self.weight = 0
+
+            # Photon is now terminated
+            self.weight = 0
 
     def reflect_refract(self, interface):
         # Get incidence state
@@ -454,9 +479,20 @@ class Photon:
                                           russian_roulette_constant=self.russian_roulette_constant,
                                           recurse=True,
                                           recursion_depth=self.recursion_depth + 1,
-                                          recursion_limit=self.recursion_limit)
-                secondary_photon.simulate()
-                self.recursed_photons = secondary_photon.recursed_photons + 1
+                                          recursion_limit=self.recursion_limit,
+                                          keep_secondary_photons=self.keep_secondary_photons)
+                recursion_error = None
+                try:
+                    secondary_photon.simulate()
+                except RecursionError as e:
+                    recursion_error = e
+                finally:
+                    if self.keep_secondary_photons:
+                        for photon in secondary_photon.secondary_photons:
+                            self.secondary_photons.append(photon)
+                    self.recursed_photons = secondary_photon.recursed_photons + 1
+                    if recursion_error is not None:
+                        raise recursion_error
 
                 mu_x *= n1 / n2
                 mu_y *= n1 / n2
@@ -484,18 +520,21 @@ class Photon:
         self.A += absorbed_weight
         self.weight = self.weight - absorbed_weight
 
-    def scatter(self):
-        # Sample random scattering angles from distribution
-        [xi, zeta] = np.random.rand(2)
-        if self.medium.g != 0.0:
-            lead_coeff = 1 / (2 * self.medium.g)
-            term_2 = self.medium.g ** 2
-            term_3 = (1 - term_2) / (1 - self.medium.g + (2 * self.medium.g * xi))
-            cosine_theta = lead_coeff * (1 + term_2 - term_3)
+    def scatter(self, theta_phi=None):
+        if theta_phi is None:
+            # Sample random scattering angles from distribution
+            [xi, zeta] = np.random.rand(2)
+            if self.medium.g != 0.0:
+                lead_coeff = 1 / (2 * self.medium.g)
+                term_2 = self.medium.g ** 2
+                term_3 = (1 - term_2) / (1 - self.medium.g + (2 * self.medium.g * xi))
+                cosine_theta = lead_coeff * (1 + term_2 - term_3)
+            else:
+                cosine_theta = (2 * xi) - 1
+            theta = np.arccos(cosine_theta)
+            phi = 2 * np.pi * zeta
         else:
-            cosine_theta = (2 * xi) - 1
-        theta = np.arccos(cosine_theta)
-        phi = 2 * np.pi * zeta
+            theta, phi = theta_phi
 
         # Update direction cosines
         mu_x, mu_y, mu_z = self.directional_cosines
@@ -580,6 +619,12 @@ class OpticalMedium:
         self.g = g
         self.display_color = display_color
 
+    def __repr__(self):
+        return self.type.capitalize() + ' Optical Medium Object'
+
+    def __str__(self):
+        return self.type.capitalize()
+
     def _wave_index(self, wavelength):
         if iterable(wavelength) and iterable(self.wavelengths):
             return [np.where(self.wavelengths == wl)[0][0] for wl in wavelength]
@@ -614,7 +659,10 @@ class OpticalMedium:
 
     @property
     def albedo(self):
-        return self.mu_a / self.mu_t
+        if self.mu_t == 0:
+            return 0
+        else:
+            return self.mu_a / self.mu_t
 
 
 def insert_into_mclut_database(simulation_parameters, simulation_results, db_file='mclut.db'):

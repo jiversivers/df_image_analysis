@@ -29,17 +29,16 @@ def main():
     recurse = True
 
     # Make fixed mediums
-    di_water = mc.OpticalMedium(n=1.33, mu_a=0.02, mu_s=0.003, g=0, type='water')
-    glass = mc.OpticalMedium(n=1.523, mu_a=0, mu_s=0.003, g=0, type='glass')
-    tissue = mc.OpticalMedium(n=1.33, mu_a=5, mu_s=100, g=0.85, type='tissue')
+    di_water = mc.OpticalMedium(n=1.33, mu_a=0, mu_s=0, g=0, type='water')
+    glass = mc.OpticalMedium(n=1.523, mu_a=0, mu_s=0, g=0, type='glass')
     surroundings_n = 1.33
 
     # Set up illumination and detection
     OD = 0.3205672345588178
     ID = 0.27206723455881785
-    theta = 0.5743788414166319
+    theta = np.arctan(-OD / 0.2)
 
-    sampler = mc.monte_carlo.ring_pattern((ID, OD), np.arctan(-2.5 / 2))
+    sampler = mc.monte_carlo.ring_pattern((ID, OD), theta)
     led = mc.Illumination(pattern=sampler)
     detector = mc.Detector(mc.monte_carlo.cone_of_acceptance(ID))
 

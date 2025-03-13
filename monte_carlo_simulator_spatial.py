@@ -19,24 +19,29 @@ print(f"Using {np.__name__}")
 
 def main():
     # Init parameter sets
-    mu_s_array = np.arange(0, 41, 1)
-    mu_a_array = np.arange(1, 41, 1)
+    mu_s_array = np.arange(0, 51, 1)
+    mu_a_array = np.arange(1, 51, 1)
     g_array = [0.9]
-    d_array = [float('inf')]  # Fix as semi-infinite
+    d_array = [0.1]  # Fix as 1 mm
     n = 50000
     tissue_n = 1.33
-    surroundings_n = 1
+    surroundings_n = 1.33
     recurse = True
 
     # Make fixed mediums
-    di_water = mc.OpticalMedium(n=1, mu_s=0.003, mu_a=0, g=0, type='di water')
-    glass = mc.OpticalMedium(n=1.515, mu_s=0.003, mu_a=0, g=0, type='glass')
+    di_water = mc.OpticalMedium(n=1.33, mu_a=0.02, mu_s=0.003, g=0, type='water')
+    glass = mc.OpticalMedium(n=1.523, mu_a=0, mu_s=0.003, g=0, type='glass')
+    tissue = mc.OpticalMedium(n=1.33, mu_a=5, mu_s=100, g=0.85, type='tissue')
+    surroundings_n = 1.33
 
-    # Setup illumination and detector
-    beam = mc.Illumination(
-        pattern=mc.monte_carlo.ring_pattern((1.6443276801785274, 3.205672319821467), np.arctan(-2.5 / 2)),
-        spectrum=None
-    )
+    # Set up illumination and detection
+    OD = 0.3205672345588178
+    ID = 0.27206723455881785
+    theta = 0.5743788414166319
+
+    sampler = mc.monte_carlo.ring_pattern((ID, OD), np.arctan(-2.5 / 2))
+    led = mc.Illumination(pattern=sampler)
+    detector = mc.Detector(mc.monte_carlo.cone_of_acceptance(ID))
 
     # Simulate
     conn = sqlite3.connect('databases/hsdfm_data.db')
@@ -83,34 +88,32 @@ def main():
                                    total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array)):
         # Make the system
         tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, type='tissue')
-        system = mc.System(di_water, 0.1,  # 1mm
-                           glass, 0.017,  # 0.17mm
-                           tissue, d,
-                           surrounding_n=surroundings_n)
-        cone = mc.Detector(
-            acceptor=mc.monte_carlo.cone_of_acceptance(1.6443276801785274)
+        system = mc.System(
+            di_water, 0.2,  # 2mm
+            glass, 0.017,  # 0.17mm
+            tissue, d,
+            surrounding_n=surroundings_n,
+            illuminator=led,
+            detector=(detector, 0)
         )
 
         T, R, A = 3 * [0]
-
+        detector.reset()
         for i in range(n):
-            photon = beam.photon()
-            photon.system = system
-            photon.recurse = recurse
+            photon = system.beam(recurse=True, russian_roulette_constant=20)
             photon.simulate()
-            if photon.exit_location is not None and photon.exit_location[2] < system.boundaries[0]:
-                cone.detected(photon.exit_location)
             T += photon.T
             R += photon.R
             A += photon.A
-        print(f'Detector detected: {100 * cone.n / n:0.2f}%. Total reflected: {100 * R / n:0.2f}%')
+
+        detected_fraction = detector.n_detected / (n - (R - detector.n_detected))
 
         # Add results to db
         c.execute(f"""
                     INSERT INTO mclut (
                     mu_s, mu_a, g, depth, transmission, reflectance, absorption, simulation_id, forced
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, false)""", (
-            float(mu_s), float(mu_a), float(g), float(d), float(T / n), float(cone.n / n), float(A / n), simulation_id
+            float(mu_s), float(mu_a), float(g), float(d), float(T / n), float(detected_fraction), float(A / n), simulation_id
         ))
     conn.commit()
 

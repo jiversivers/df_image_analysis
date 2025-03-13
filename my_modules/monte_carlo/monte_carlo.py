@@ -235,6 +235,7 @@ class IndexableProperty(np.ndarray):
         if self.normalize:
             self /= np.linalg.norm(self)
 
+
 class Photon:
     def __init__(self, wavelength,
                  system=None,
@@ -381,8 +382,7 @@ class Photon:
             exit_direction = self.directional_cosines
 
             # Reflect and refract
-            self.reflect(interface)
-            self.refract(interface)
+            self.reflect_refract(interface)
 
             # Rescaling the remaining step for the new medium and update
             step *= (1 - step_frac) * mu_t / self.medium.mu_t_at(self.wavelength)
@@ -409,7 +409,6 @@ class Photon:
             if self.system.detector is not None and self.exit_location[2] == self.system.detector_location:
                 self.system.detector(self)
 
-
             # Increment counters based on exit direction
             if self.location_coordinates[2] < self.system.boundaries[0]:
                 self.R += self.weight
@@ -418,64 +417,65 @@ class Photon:
                 self.T += self.weight
                 self.weight = 0
 
-    def refract(self, interface):
-        mu_x, mu_y, mu_z = self.directional_cosines
-        n1_n2 = (interface[0].n / interface[1].n)
-        sin_theta_t = n1_n2 * np.sqrt(1 - mu_z ** 2)
+    def reflect_refract(self, interface):
+        # Get incidence state
+        mu_x, mu_y, mu_z_i = self.directional_cosines
+        n1 = interface[0].n
+        n2 = interface[1].n
 
-        # Update directions
-        # Critical angle TIR
+        # Calculate refraction
+        sin_theta_t = n1 / n2 * np.sqrt(1 - mu_z_i ** 2)
+
+        # TIR
         if sin_theta_t > 1:
-            mu_z = -self.directional_cosines[2]
+            mu_z_t = -mu_z_i
             self.tir_count += 1
             if self.tir_count > self.tir_limit:
                 self.A += self.weight
                 self.weight = 0
-        # Snell's law
+
+        # Snell's law + Fresnel
         else:
-            mu_x *= n1_n2
-            mu_y *= n1_n2
-            mu_z = np.sign(mu_z) * np.sqrt(1 - sin_theta_t ** 2)
+            mu_z_t = np.sign(mu_z_i) * np.sqrt(1 - sin_theta_t ** 2)
+
+            # Calculate reflection
+            Rs = np.abs(((n1 * mu_z_i) - (n2 * mu_z_t)) / ((n1 * mu_z_i) + (n2 * mu_z_t))) ** 2
+            Rp = np.abs(((n2 * mu_z_t) - (n1 * mu_z_i)) / ((n1 * mu_z_i) + (n2 * mu_z_t))) ** 2
+            specular_reflection = 0.5 * (Rs + Rp) * self.weight
+
+            # Inject secondary current_photon to account for reflected portion with current direciton and location
+            if self.recurse and self.recursion_depth <= self.recursion_limit:
+                secondary_photon = Photon(self.wavelength,
+                                          system=self.system,
+                                          directional_cosines=(mu_x, mu_y, -mu_z_i),
+                                          location_coordinates=self.location_coordinates,
+                                          weight=specular_reflection,
+                                          russian_roulette_constant=self.russian_roulette_constant,
+                                          recurse=True,
+                                          recursion_depth=self.recursion_depth + 1,
+                                          recursion_limit=self.recursion_limit)
+                secondary_photon.simulate()
+                self.recursed_photons = secondary_photon.recursed_photons + 1
+
+                mu_x *= n1 / n2
+                mu_y *= n1 / n2
+
+                self.T += secondary_photon.T
+                self.R += secondary_photon.R
+                self.A += secondary_photon.A
+
+            else:
+                # If the reflected fraction will be reflected out, add it to reflected count,
+                if mu_z_i > 0:
+                    self.R += specular_reflection
+                # Else add it to transmitted
+                elif mu_z_i < 0:
+                    self.T += specular_reflection
+
+            self.weight = self.weight - specular_reflection
 
         # Send to setter for normalization
-        self.directional_cosines = [mu_x, mu_y, mu_z]
-
-    # For simplicity, the reflected fraction will not be tracked any further for now (to avoid recursive photons). It
-    # will just be simplified to continue in the exact same direction to infinity
-    def reflect(self, interface):
-        specular_reflection = abs(
-            (interface[1].n - interface[0].n) /
-            (interface[1].n + interface[0].n)
-        ) ** 2
-
-        reflected_weight = self.weight * specular_reflection
-
-        # Inject secondary current_photon to account for reflected portion with current direciton and location
-        if self.recurse:
-            secondary_photon = Photon(self.wavelength,
-                                      system=self.system,
-                                      directional_cosines=self.directional_cosines,
-                                      location_coordinates=self.location_coordinates,
-                                      weight=reflected_weight,
-                                      russian_roulette_constant=self.russian_roulette_constant,
-                                      recurse=True,
-                                      recursion_depth=self.recursion_depth + 1,
-                                      recursion_limit=self.recursion_limit)
-            secondary_photon.simulate()
-            self.recursed_photons = secondary_photon.recursed_photons + 1
-            self.T += secondary_photon.T
-            self.R += secondary_photon.R
-            self.A += secondary_photon.A
-
-        # If the reflected fraction will be reflected out, add it to reflected count,
-        else:
-            if self.directional_cosines[2] > 0:
-                self.R += reflected_weight
-            # Else add it to transmitted
-            elif self.directional_cosines[2] < 0:
-                self.T += reflected_weight
-
-        self.weight = self.weight - reflected_weight
+        self.directional_cosines = [mu_x, mu_y, mu_z_t]
 
     # TODO: Add support for fluorescence-based secondary photons
     def absorb(self):

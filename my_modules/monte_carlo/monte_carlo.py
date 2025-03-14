@@ -4,7 +4,7 @@ import warnings
 from matplotlib import pyplot as plt, animation
 from numpy import iterable
 
-from my_modules.monte_carlo.hardware import ring_pattern, cone_of_acceptance
+from my_modules.monte_carlo.hardware import ring_pattern, cone_of_acceptance, ID, OD, THETA
 from my_modules.image_processing.models import calculate_mus
 
 try:
@@ -254,7 +254,8 @@ class Photon:
                  russian_roulette_constant=20,
                  recurse=True,
                  recursion_depth=0,
-                 recursion_limit=10000,
+                 recursion_limit=100,
+                 throw_recursion_error=True,
                  keep_secondary_photons=False,
                  tir_limit=float('inf')):
 
@@ -273,6 +274,7 @@ class Photon:
         self.recursion_depth = recursion_depth
         self.recursion_limit = recursion_limit
         self.recursed_photons = 0
+        self.throw_recursion_error = throw_recursion_error
         self.keep_secondary_photons = keep_secondary_photons
         self.secondary_photons = []
         self.tir_limit = tir_limit
@@ -309,13 +311,7 @@ class Photon:
         self._location_coordinates = IndexableProperty(value)
 
     def copy(self):
-        copy = self.__class__(self.wavelength,
-                              system=self.system,
-                              directional_cosines=self.directional_cosines,
-                              location_coordinates=self.location_coordinates,
-                              weight=self.weight,
-                              russian_roulette_constant=self.russian_roulette_constant,
-                              recurse=self.recurse)
+        copy = self.__class__(self.wavelength)
         for key, val in self.__dict__.items():
             setattr(copy, key, val)
         return copy
@@ -323,7 +319,7 @@ class Photon:
     def simulate(self):
         assert self.system is not None, RuntimeError('Photon must be in an Optical System object to simulate.')
         if self.recursion_depth >= self.recursion_limit:
-            if not self.throw_reursion_error:
+            if not self.throw_recursion_error:
                 self.recurse = False
                 warnings.warn(
                     'Maximum recursion depth reached. Simulating deep photon with no recursion.\n'
@@ -471,16 +467,10 @@ class Photon:
 
             # Inject secondary current_photon to account for reflected portion with current direciton and location
             if self.recurse and self.recursion_depth <= self.recursion_limit:
-                secondary_photon = Photon(self.wavelength,
-                                          system=self.system,
-                                          directional_cosines=(mu_x, mu_y, -mu_z_i),
-                                          location_coordinates=self.location_coordinates,
-                                          weight=specular_reflection,
-                                          russian_roulette_constant=self.russian_roulette_constant,
-                                          recurse=True,
-                                          recursion_depth=self.recursion_depth + 1,
-                                          recursion_limit=self.recursion_limit,
-                                          keep_secondary_photons=self.keep_secondary_photons)
+                secondary_photon = self.copy()
+                secondary_photon.directional_cosines = (mu_x, mu_y, -mu_z_i)
+                secondary_photon.weight = specular_reflection
+                secondary_photon.recursion_depth += 1
                 recursion_error = None
                 try:
                     secondary_photon.simulate()
@@ -710,7 +700,7 @@ def sample_spectrum(wavelengths, spectrum):
 
 class Illumination:
     def __init__(self,
-                 pattern=ring_pattern((0.16443276801785274, 0.3205672319821467), np.arctan(-2.5 / 2)),
+                 pattern=ring_pattern((ID, OD), THETA),
                  spectrum=None):
         self.pattern = pattern
         self.spectrum = spectrum
@@ -722,7 +712,7 @@ class Illumination:
 
 
 class Detector:
-    def __init__(self, acceptor=cone_of_acceptance(0.16443276801785274)):
+    def __init__(self, acceptor=cone_of_acceptance(ID)):
         self.acceptor = acceptor
         self.n_total = 0
         self.n_detected = 0

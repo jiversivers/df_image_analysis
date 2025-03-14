@@ -1,5 +1,6 @@
 import itertools
 import sqlite3
+import warnings
 
 import my_modules.monte_carlo as mc
 from tqdm import tqdm
@@ -82,40 +83,56 @@ def main():
     conn.commit()
     simulation_id = c.lastrowid
 
-    # Set the total number of iterations for each loop level
-    for (mu_s, mu_a, g, d) in tqdm(itertools.product(mu_s_array, mu_a_array, g_array, d_array), desc="Processing",
-                                   total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array)):
-        # Make the system
-        tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, type='tissue')
-        system = mc.System(
-            di_water, 0.2,  # 2mm
-            glass, 0.017,  # 0.17mm
-            tissue, d,
-            surrounding_n=surroundings_n,
-            illuminator=led,
-            detector=(detector, 0)
-        )
+    conn.isolation_level = None  # Autcommit
+    c.execute("BEGIN TRANSACTION")
+    try:
+        # Set the total number of iterations for each loop level
+        for (mu_s, mu_a, g, d) in tqdm(itertools.product(mu_s_array, mu_a_array, g_array, d_array), desc="Processing",
+                                       total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array)):
+            # Make the system
+            tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, type='tissue')
+            system = mc.System(
+                di_water, 0.2,  # 2mm
+                glass, 0.017,  # 0.17mm
+                tissue, d,
+                surrounding_n=surroundings_n,
+                illuminator=led,
+                detector=(detector, 0)
+            )
 
-        T, R, A = 3 * [0]
-        detector.reset()
-        for i in range(n):
-            photon = system.beam(recurse=True, russian_roulette_constant=20)
-            photon.simulate()
-            T += photon.T
-            R += photon.R
-            A += photon.A
+            T, R, A = 3 * [0]
+            detector.reset()
+            for i in range(n):
+                photon = system.beam(recurse=True,
+                                     russian_roulette_constant=20,
+                                     tir_limit=10,
+                                     recursion_limit=100,
+                                     throw_recursion_error=False)
+                photon.simulate()
+                T += photon.T
+                R += photon.R
+                A += photon.A
 
-        detected_fraction = detector.n_detected / (n - (R - detector.n_detected))
+            detected_fraction = detector.n_detected / (n - (R - detector.n_detected))
 
-        # Add results to db
-        c.execute(f"""
-                    INSERT INTO mclut (
-                    mu_s, mu_a, g, depth, transmission, reflectance, absorption, simulation_id, forced
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, false)""", (
-            float(mu_s), float(mu_a), float(g), float(d), float(T / n), float(detected_fraction), float(A / n), simulation_id
-        ))
-    conn.commit()
-
+            # Add results to db
+            c.execute(f"""
+                        INSERT INTO mclut (
+                        mu_s, mu_a, g, depth, transmission, reflectance, absorption, simulation_id, forced
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, false)""", (
+                float(mu_s), float(mu_a), float(g), float(d), float(T / n), float(detected_fraction), float(A / n), simulation_id
+            ))
+    except Exception as e:
+        warnings.warn(e)
+        rollback = input('Roll back database? (y) or (n)?').strip().lower()
+        if rollback == 'y':
+            print('Rolling back database')
+            conn.rollback()
+        else:
+            print('Continuing without rollback')
+            conn.commit()
+    finally:
+        conn.close()
 
 if __name__ == '__main__':
     main()

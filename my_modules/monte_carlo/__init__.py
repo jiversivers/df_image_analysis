@@ -3,6 +3,7 @@ import sqlite3
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 from .monte_carlo import Photon, OpticalMedium, System, Illumination, Detector
+from my_modules.monte_carlo.hardware import WD
 
 # Setup default database and MCLUT version
 conn = sqlite3.connect(r'C:\Users\jdivers\PycharmProjects\df_image_analysis\databases\hsdfm_data.db')
@@ -73,9 +74,9 @@ def lookup(mu_s, mu_a, g, depth,
         params = c.fetchone()
 
         # Re-create system
-        di_water = OpticalMedium(n=params[1], mu_s=params[2], mu_a=params[3], g=0, type='di_water')
-        tissue = OpticalMedium(n=params[4], mu_s=mu_s, mu_a=mu_a, g=g, type='tissue')
-        system = System(di_water, 0.01, tissue, depth, surrounding_n=params[5])
+        di_water = OpticalMedium(n=params[1], mu_s=params[2], mu_a=params[3], g=0, name='di_water')
+        tissue = OpticalMedium(n=params[4], mu_s=mu_s, mu_a=mu_a, g=g, name='tissue')
+        system = System(di_water, WD, tissue, depth, surrounding_n=params[5])
 
         T, R, A = simulate(system, n=params[0], recurse=params[6])
 

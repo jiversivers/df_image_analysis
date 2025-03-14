@@ -30,8 +30,8 @@ def main():
     recurse = True
 
     # Make fixed mediums
-    di_water = mc.OpticalMedium(n=1.33, mu_a=0, mu_s=0, g=0, type='water')
-    glass = mc.OpticalMedium(n=1.523, mu_a=0, mu_s=0, g=0, type='glass')
+    di_water = mc.OpticalMedium(n=1.33, mu_a=0, mu_s=0, g=0, name='water')
+    glass = mc.OpticalMedium(n=1.523, mu_a=0, mu_s=0, g=0, name='glass')
     surroundings_n = 1.33
 
     # Set up illumination and detection
@@ -90,7 +90,7 @@ def main():
         for (mu_s, mu_a, g, d) in tqdm(itertools.product(mu_s_array, mu_a_array, g_array, d_array), desc="Processing",
                                        total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array)):
             # Make the system
-            tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, type='tissue')
+            tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, name='tissue')
             system = mc.System(
                 di_water, 0.2,  # 2mm
                 glass, 0.017,  # 0.17mm

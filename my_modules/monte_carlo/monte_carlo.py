@@ -1,3 +1,4 @@
+import copy
 import sqlite3
 import warnings
 
@@ -50,7 +51,7 @@ class System:
         self.detector_location = detector[1]
 
         assert len(args) % 2 == 0, "Arguments must be in groups of 2: medium object and thickness."
-        self.surroundings = OpticalMedium(n=surrounding_n, mu_s=0, mu_a=0, type='surroundings')
+        self.surroundings = OpticalMedium(n=surrounding_n, mu_s=0, mu_a=0, name='surroundings')
 
         # Add surroundings from -inf to 0
         interface = 0  # Current interface location during stacking
@@ -77,6 +78,41 @@ class System:
             self.stack[(interface, float('inf'))] = self.surroundings
 
         self.boundaries = np.asarray(boundaries)
+
+    def __repr__(self):
+        return ''.join([f' <-- {bound[0]} --> {layer}' for bound, layer in self.stack.items()])
+
+    def __str__(self):
+        stack = '\n'
+        space = 0
+        for bound, layer in self.stack.items():
+            txt = layer.__str__()
+            space = len(txt) if len(txt) > space else space
+            txt = f'{bound[0]:.4g}'
+            space = len(txt) if len(txt) > space else space
+        txt = f'{bound[1]:.4g}'
+        space = len(txt) if len(txt) > space else space
+        space += 8
+
+        for bound, layer in self.stack.items():
+            txt = f' {bound[0]:.4g} '
+            lfill = '-' * ((space - len(txt) - 2) // 2)
+            rfill = '-' * (space - len(txt) - len(lfill) - 2)
+            boundary = f'|{lfill}{txt}{rfill}|\n'
+
+            txt = f' {layer} '
+            lfill = ' ' * int(np.floor((space - len(txt) - 6) / 2))
+            rfill = ' ' * (space - len(txt) - len(lfill) - 6)
+            layer = f'|->{lfill}{txt}{rfill}<-|\n'
+            stack += boundary + layer
+
+        txt = f' {bound[1]:.4g} '
+        lfill = '-' * ((space - len(txt) - 2) // 2)
+        rfill = '-' * (space - len(txt) - len(lfill) - 2)
+        boundary = f'|{lfill}{txt}{rfill}|\n'
+        stack += boundary
+        border = ' ' + '_' * (space - 2) + ' '
+        return border + stack + border
 
     def beam(self, **kwargs):
         photon = self.illuminator.photon()
@@ -208,7 +244,7 @@ class System:
                 depth = np.diff(bound)
                 y_edge = bound[0] - 0.1 * depth
                 x_edge = ax.set_xlim(ax.get_xlim())[0] * 0.95
-                ax.text(x_edge, y_edge, medium.type, fontsize=12)
+                ax.text(x_edge, y_edge, medium.name, fontsize=12)
                 line_x = 100 * np.asarray(ax.get_xlim())
                 alpha += 0.2
                 ax.fill_between(line_x, bound[0], bound[1],
@@ -267,24 +303,24 @@ class Photon:
         self.exit_location = None
         self.exit_direction = None
         self.exit_weight = None
-        self._weight = weight
+        self._weight = float(weight)
         self.russian_roulette_constant = russian_roulette_constant
         self._medium = None
         self.recurse = recurse
         self.recursion_depth = recursion_depth
         self.recursion_limit = recursion_limit
-        self.recursed_photons = 0
         self.throw_recursion_error = throw_recursion_error
         self.keep_secondary_photons = keep_secondary_photons
         self.secondary_photons = []
         self.tir_limit = tir_limit
-        self.tir_count = 0
 
         # Call setter in case current_photon is DOA
         self.weight = weight
 
         # Init trackers
-        self.location_history = [self.location_coordinates]
+        self.location_history = [(self.location_coordinates, self.weight)]
+        self.recursed_photons = 0
+        self.tir_count = 0
         self.A = 0.0
         self.T = 0.0
         self.R = 0.0
@@ -310,11 +346,28 @@ class Photon:
     def location_coordinates(self, value):
         self._location_coordinates = IndexableProperty(value)
 
-    def copy(self):
-        copy = self.__class__(self.wavelength)
+    def copy(self, wavelength=None, **kwargs):
+        new_obj = copy.deepcopy(self)
+
+        # Check for kwarg overwrites
+        for key, value in kwargs.items():
+            if hasattr(new_obj, key):
+                setattr(new_obj, key, value)
+            elif hasattr(new_obj, f'_{key}'):
+                setattr(new_obj, f'_{key}', value)
+
+        # Reset tracker attributes
+        for key in ['T', 'R', 'A', 'tir_count', 'recursed_photons']:
+            setattr(new_obj, key, 0)
+        new_obj.location_history = [(new_obj.location_coordinates, new_obj.weight)]
+
+        return new_obj
+
+    def __repr__(self):
+        out = ''
         for key, val in self.__dict__.items():
-            setattr(copy, key, val)
-        return copy
+            out += f'{key.strip('_')}: {val}\n'
+        return out
 
     def simulate(self):
         assert self.system is not None, RuntimeError('Photon must be in an Optical System object to simulate.')
@@ -342,18 +395,15 @@ class Photon:
 
     @weight.setter
     def weight(self, weight):
+        self._weight = weight
         if 0 < weight < 0.005:
             self.russian_roulette()
-        elif weight <= 0:
-            self._weight = 0
-        else:
-            self._weight = weight
 
     def russian_roulette(self):
-        if np.random.rand() > (1 / self.russian_roulette_constant):
-            self.weight = 0
+        if np.random.rand() >= (1 / self.russian_roulette_constant):
+            self._weight = 0
         else:
-            self._weight *= self.russian_roulette_constant
+            self.weight = self.weight * self.russian_roulette_constant
 
     @property
     def medium(self):
@@ -396,9 +446,8 @@ class Photon:
                 # If in a medium with mu_t = 0, force move to next interface
                 step = float('inf')
 
-            # Compute intersection with next interface
+            # If interface will be crossed, go to it, reflect/refract and restart
             interface, plane = self.system.interface_crossed(loc, loc + step * dir_cos)
-
             if interface and plane is not None:
                 # Compute step to interface
                 interface_step = (plane - loc[2]) / dir_cos[2] if dir_cos[2] != 0 else float('inf')
@@ -406,23 +455,32 @@ class Photon:
                 if interface_step < step:
                     # Move to the interface
                     self.location_coordinates = loc + interface_step * dir_cos
-                    self.location_history.append(self.location_coordinates)
 
                     # Handle reflection/refraction
                     self.reflect_refract(interface)
+
+                    # Update history
+                    self.location_history.append((self.location_coordinates, self.weight))
 
                     # Restart loop
                     step = None
                     continue
 
-            # If no interface is crossed, update location and break loop
+            # If no interface is crossed, update location
             self.location_coordinates = loc + step * dir_cos
-            self.location_history.append(self.location_coordinates)
+
+            # Check if this got just to an interface and need reflection/refraction
+            interface = self.system.in_medium(self.location_coordinates)
+            if isinstance(interface, tuple):
+                self.reflect_refract(interface)
+
+            # Update history and end loop
+            self.location_history.append((self.location_coordinates, self.weight))
             break
 
         # Check termination (exiting the system)
         if not (self.system.boundaries[0] < self.location_coordinates[2] < self.system.boundaries[-1]):
-            self.exit_location = self.location_history[-2] if len(
+            self.exit_location = self.location_history[-2][0] if len(
                 self.location_history) > 1 else self.location_coordinates
             self.exit_weight = self.weight
 
@@ -458,19 +516,20 @@ class Photon:
 
         # Snell's law + Fresnel
         else:
-            mu_z_t = np.sign(mu_z_i) * np.sqrt(1 - sin_theta_t ** 2)
+            mu_z_t = np.sqrt(1 - sin_theta_t ** 2)
 
             # Calculate reflection
-            Rs = np.abs(((n1 * mu_z_i) - (n2 * mu_z_t)) / ((n1 * mu_z_i) + (n2 * mu_z_t))) ** 2
-            Rp = np.abs(((n2 * mu_z_t) - (n1 * mu_z_i)) / ((n1 * mu_z_i) + (n2 * mu_z_t))) ** 2
-            specular_reflection = 0.5 * (Rs + Rp) * self.weight
+            rs = np.abs(((n1 * np.abs(mu_z_i)) - (n2 * mu_z_t)) / ((n1 * np.abs(mu_z_i)) + (n2 * mu_z_t))) ** 2
+            rp = np.abs(((n2 * mu_z_t) - (n1 * np.abs(mu_z_i))) / ((n1 * np.abs(mu_z_i)) + (n2 * mu_z_t))) ** 2
+            specular_reflection = 0.5 * (rs + rp) * self.weight
+
+            mu_z_t = np.sign(mu_z_i) * mu_z_t  # Ensure correct sign
 
             # Inject secondary current_photon to account for reflected portion with current direciton and location
             if self.recurse and self.recursion_depth <= self.recursion_limit:
-                secondary_photon = self.copy()
-                secondary_photon.directional_cosines = (mu_x, mu_y, -mu_z_i)
-                secondary_photon.weight = specular_reflection
-                secondary_photon.recursion_depth += 1
+                secondary_photon = self.copy(directional_cosines=(mu_x, mu_y, -mu_z_i),
+                                             weight=specular_reflection,
+                                             recursion_depth=self.recursion_depth + 1)
                 recursion_error = None
                 try:
                     secondary_photon.simulate()
@@ -478,14 +537,12 @@ class Photon:
                     recursion_error = e
                 finally:
                     if self.keep_secondary_photons:
+                        self.secondary_photons.append(secondary_photon)
                         for photon in secondary_photon.secondary_photons:
                             self.secondary_photons.append(photon)
                     self.recursed_photons = secondary_photon.recursed_photons + 1
                     if recursion_error is not None:
                         raise recursion_error
-
-                mu_x *= n1 / n2
-                mu_y *= n1 / n2
 
                 self.T += secondary_photon.T
                 self.R += secondary_photon.R
@@ -499,6 +556,9 @@ class Photon:
                 elif mu_z_i < 0:
                     self.T += specular_reflection
 
+            # Updated for transmitted portion
+            mu_x *= n1 / n2
+            mu_y *= n1 / n2
             self.weight = self.weight - specular_reflection
 
         # Send to setter for normalization
@@ -549,11 +609,11 @@ class Photon:
         project_onto = [project_onto] if isinstance(project_onto, (str)) or project_onto is None else project_onto
         data = {'x': [], 'y': [], 'z': []}
         for loc in self.location_history:
-            if ignore_outside and (loc[2] < self.system.boundaries[0] or loc[2] > self.system.boundaries[-1]):
+            if ignore_outside and (loc[0][2] < self.system.boundaries[0] or loc[0][2] > self.system.boundaries[-1]):
                 break
-            data['x'].append(loc[0])
-            data['y'].append(loc[1])
-            data['z'].append(loc[2])
+            data['x'].append(loc[0][0])
+            data['y'].append(loc[0][1])
+            data['z'].append(loc[0][2])
 
         fig = plt.figure(figsize=(8 * len(project_onto), 8)) if not plt.get_fignums() else plt.gcf()
         if project_onto[0]:
@@ -600,8 +660,8 @@ class Photon:
 class OpticalMedium:
 
     def __init__(self, n=1, mu_s=mu_s, mu_a=mu_a, wavelengths=wl, g=1,
-                 type='default', display_color=None):
-        self.type = type
+                 name='default', display_color=None):
+        self.name = name
         self.n = n
         self.mu_s = np.array(mu_s)
         self.mu_a = np.array(mu_a)
@@ -610,10 +670,12 @@ class OpticalMedium:
         self.display_color = display_color
 
     def __repr__(self):
-        return self.type.capitalize() + ' Optical Medium Object'
+        return self.name.capitalize() + ' Optical Medium Object'
 
     def __str__(self):
-        return self.type.capitalize()
+        if self.name == 'default':
+            return f'Optical Medium: n={self.n}, mu_s={self.mu_s}, mu_a={self.mu_a}, g={self.g}'
+        return self.name.capitalize()
 
     def _wave_index(self, wavelength):
         if iterable(wavelength) and iterable(self.wavelengths):

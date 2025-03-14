@@ -1,6 +1,14 @@
 import numpy as np
 from numpy import iterable
 
+# Hardware specs in cm
+ID = 0.16443276801785274
+OD = 0.3205672319821467
+WD = 0.2
+
+THETA = np.arctan(-OD / WD)  # rad
+NA = 1.0
+
 
 def ring_pattern(r_bounds, angle_bounds):
     if not iterable(r_bounds):
@@ -45,10 +53,10 @@ def ring_pattern(r_bounds, angle_bounds):
     return sampler
 
 
-def cone_of_acceptance(r, NA=1, n=1.33):
+def cone_of_acceptance(r, na=NA, n=1.33):
     def acceptor(x, y, mu_z=None):
         if mu_z is not None:
-            theta_max = np.arcsin(NA / n)
+            theta_max = np.arcsin(na / n)
             mu_z_max = np.cos(theta_max)
             too_steep = mu_z > mu_z_max
         else:

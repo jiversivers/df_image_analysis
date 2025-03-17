@@ -3,18 +3,19 @@ import sqlite3
 import warnings
 
 from matplotlib import pyplot as plt, animation
-from numpy import iterable
 
 from my_modules.monte_carlo.hardware import ring_pattern, cone_of_acceptance, ID, OD, THETA
 from my_modules.image_processing.models import calculate_mus
 
 try:
     import cupy as np
+    from cupy import iterable
 
     if not np.is_available():
         raise RuntimeError("CUDA not available; reverting to NumPy.")
 except (ImportError, RuntimeError):
     import numpy as np
+    from numpy import iterable
 
     np.is_available = lambda: False  # Mock the `is_available` method for consistency
 

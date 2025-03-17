@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 import numpy as np
@@ -6,7 +7,7 @@ from .monte_carlo import Photon, OpticalMedium, System, Illumination, Detector
 from my_modules.monte_carlo.hardware import WD
 
 # Setup default database and MCLUT version
-conn = sqlite3.connect(r'C:\Users\jdivers\PycharmProjects\df_image_analysis\databases\hsdfm_data.db')
+conn = sqlite3.connect(f'databases{os.sep}hsdfm_data.db')
 c = conn.cursor()
 c.execute("SELECT max(id) FROM mclut_simulations")
 simulation_id = c.fetchone()[0]

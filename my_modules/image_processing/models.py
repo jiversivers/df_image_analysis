@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 try:
@@ -14,7 +15,7 @@ from scipy.integrate import dblquad
 
 from my_modules.monte_carlo.hardware import ID, THETA, darkfield_footprint
 
-conn = sqlite3.connect(r'databases\hsdfm_data.db')
+conn = sqlite3.connect(f'databases{os.sep}hsdfm_data.db')
 c = conn.cursor()
 c.execute(f"SELECT * FROM hb_spectra")
 wl, hbo2, dhb = zip(*c.fetchall())

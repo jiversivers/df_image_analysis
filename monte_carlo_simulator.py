@@ -29,15 +29,15 @@ def main():
     recurse = True
 
     # Make water medium
-    di_water = mc.OpticalMedium(n=1, mu_s=0.003, mu_a=0, g=0, type='di water')
-    glass = mc.OpticalMedium(n=1.515, mu_s=0.003, mu_a=0, g=0, type='glass')
+    di_water = mc.OpticalMedium(n=1.33, mu_s=0, mu_a=0, g=0, name='di water')
+    glass = mc.OpticalMedium(n=1.523, mu_s=0, mu_a=0, g=0, name='glass')
 
     # Simulate
     conn = sqlite3.connect('databases/hsdfm_data.db')
     c = conn.cursor()
     c.execute("""
     CREATE TABLE IF NOT EXISTS mclut (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inner INTEGER PRIMARY KEY AUTOINCREMENT,
         mu_s REAL,
         mu_a REAL,
         g REAL,
@@ -51,7 +51,7 @@ def main():
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS mclut_simulations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inner INTEGER PRIMARY KEY AUTOINCREMENT,
     photon_count INTEGER NOT NULL,
     dimensionality INTEGER NOT NULL,
     water_n REAL NOT NULL,
@@ -76,7 +76,7 @@ def main():
     for (mu_s, mu_a, g, d) in tqdm(itertools.product(mu_s_array, mu_a_array, g_array, d_array), desc="Processing",
                                    total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array)):
         # Make the system
-        tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, type='tissue')
+        tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, name='tissue')
         system = mc.System(di_water, 0.1,  # 1mm
                            glass, 0.017,  # 0.17mm
                            tissue, d,

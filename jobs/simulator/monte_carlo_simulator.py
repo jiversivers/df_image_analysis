@@ -83,13 +83,7 @@ def main():
         # Set the total number of iterations for each loop level
         start_time = time.time()
         for i, (mu_s, mu_a, g, d) in enumerate(itertools.product(mu_s_array, mu_a_array, g_array, d_array)):
-            total_time = time.time() - start_time
-            total_m, total_s = divmod(total_time, 60)
-            time_per_it = total_time / i
-            est_time_rem = (len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array) - i) * time_per_it
-            rem_m, rem_s = divmod(est_time_rem, 60)
             print(f'Simulating mu_s={mu_s}, mu_a={mu_a}, g={g}, d={d}')
-            print(f'Time -- elapsed: {total_m}:{total_s:0.f} | {time_per_it}s/it | Est. {rem_m}:{rem_s:0.f} remaining')
 
             # Make the system
             tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, name='tissue')
@@ -125,6 +119,14 @@ def main():
                 float(mu_s), float(mu_a), float(g), float(d), float(T / n), float(detected_fraction), float(A / n), simulation_id
             ))
             conn.commit()
+
+            total_time = time.time() - start_time
+            total_m, total_s = divmod(total_time, 60)
+            time_per_it = total_time / i
+            est_time_rem = (len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array) - i) * time_per_it
+            rem_m, rem_s = divmod(est_time_rem, 60)
+            print(f'Time -- elapsed: {total_m}:{total_s:0.f} | {time_per_it}s/it | Est. {rem_m}:{rem_s:0.f} remaining')
+
     except Exception as e:
         warnings.warn(e)
         conn.commit()

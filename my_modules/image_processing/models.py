@@ -68,7 +68,7 @@ def calculate_mus(a=1,
         if force_feasible:
             msg = 'Concentrations cannot be negative'
             if isinstance(ci, (list, tuple, np.ndarray)):
-                assert np.all([c >= 0 for c in ci]), AssertionError(msg)
+                assert np.all(np.array([c >= 0 for c in ci])), AssertionError(msg)
             elif isinstance(ci, (int, float)):
                 assert ci >= 0, AssertionError(msg)
 
@@ -77,7 +77,7 @@ def calculate_mus(a=1,
                f'You gave {len(wavelength)} wavelengths but molar absorptivity had {len(epsilons[0])} elements.')
         # Either each element of the epsilons has its own element for the wavelengths
         if isinstance(epsilons[0], (list, tuple, np.ndarray)):
-            assert np.all([len(e) == len(wavelength) for e in epsilons]), AssertionError(msg)
+            assert np.all(np.array([len(e) == len(wavelength) for e in epsilons])), AssertionError(msg)
         # Or there is only one species, and it has its own elements for all wavelengths
         elif isinstance(epsilons[0], (int, float)):
             assert len(epsilons) == len(wavelength), AssertionError(msg)

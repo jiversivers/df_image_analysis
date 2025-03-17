@@ -1,6 +1,14 @@
 import sqlite3
 import csv
-import numpy as np
+
+try:
+    import cupy as np
+
+    if not np.is_available():
+        raise RuntimeError("CUDA not available; reverting to NumPy.")
+except (ImportError, RuntimeError) as e:
+    import numpy as np
+
 
 def get_optical_properties(R_exp, method='monte_carlo_lut',
                            wavelength=None, wavelength_0=650,

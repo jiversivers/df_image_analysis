@@ -28,7 +28,7 @@ cd $SLURM_SUBMIT_DIR || exit
 
 
 echo "Copying files..."
-mkdir scratch/$SLURM_JOB_ID/databases
+mkdir /scratch/$SLURM_JOB_ID/databases
 rsync -avq $SLURM_SUBMIT_DIR/*.py /scratch/$SLURM_JOB_ID
 rsync -avq /home/jdivers/data/hsdfm_database/hsdfm_data.db /scratch/$SLURM_JOB_ID/databases
 rsync -avq /home/jdivers/df_image_analysis/my_modules /scratch/$SLURM_JOB_ID

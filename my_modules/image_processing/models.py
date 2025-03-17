@@ -1,6 +1,18 @@
 import sqlite3
 
-import numpy as np
+try:
+    import cupy as np
+    from cupy import iterable
+
+    if not np.is_available():
+        raise RuntimeError("CUDA not available; reverting to NumPy.")
+except (ImportError, RuntimeError) as e:
+    import numpy as np
+    from numpy import iterable
+
+from scipy.integrate import dblquad
+
+from my_modules.monte_carlo.hardware import ID, THETA, darkfield_footprint
 
 conn = sqlite3.connect(r'C:\Users\jdivers\PycharmProjects\df_image_analysis\databases\hsdfm_data.db')
 c = conn.cursor()
@@ -22,6 +34,16 @@ class Model:
     def __call__(self, *args, **kwargs):
         return self.function(*args, **kwargs)
 
+
+def fresnel_reflection(n1, n2, theta_i):
+    # Calculate directional cosines
+    mu_z_i = np.cos(theta_i)
+    mu_z_t = np.cos(np.arcsin(n1 / n2 * np.sin(theta_i)))
+
+    # Calculate reflection
+    Rs = np.abs(((n1 * mu_z_i) - (n2 * mu_z_t)) / ((n1 * mu_z_i) + (n2 * mu_z_t))) ** 2
+    Rp = np.abs(((n2 * mu_z_t) - (n1 * mu_z_i)) / ((n1 * mu_z_i) + (n2 * mu_z_t))) ** 2
+    return 0.5 * (Rs + Rp)
 
 def calculate_mus(a=1,
                   b=1,
@@ -80,35 +102,78 @@ def calculate_mus(a=1,
     return mu_s, mu_a, wl
 
 
-# TODO: Determine how to handle RHO for multiple and non-normal beams.
+'''
+Diffusion approximation from literature.
+- Lihon V. Wang and Hsin-I Wu. Biomedical Optics: Principles and Imaging. p.106-143. John Wiley & Sons, Inc. 2007
+- Thomas J Farrell, Machael S Patterson, and Brian Wilson. A diffusion theory model of spatially resolved, steady-state 
+diffuse reflectance for the noninvasive determination of tissue optical properties in vivo. (1992). Med Phys 19:4 
+p.879-888. doi: 10.1118/1.596777
+'''
+
+# Get some default values
 mu_s, mu_a, wl = calculate_mus()
 
-
+# This will be the base and simplest form to be built up from. This assumes point, normal incidence at thr origin and
+# returns the reflectance at a radial distance, r, from the origin.
 def diffusion_approximation(mu_s=mu_s, mu_a=mu_a,
-                            rho=2.25e-3, n_tissue=1.4, n_collection=1, g=None):
+                            r=0, n_tissue=1.33, n_collection=1.33, g=0.9):
+
+    # Reduce the scattering coefficient
+    mu_s *= (1 - g)
+
+    a_correction = 1 - fresnel_reflection(n_collection, n_tissue, theta)
+
     # Optical properties (and derivatives)
     mu_t = mu_a + mu_s  # Total interaction coefficient, cm^-1
-    mu_eff = np.sqrt(3 * mu_a * mu_t)  # In text (intro while discussing Patterson et al.)
-    albedo = mu_s / mu_t  # In text (intro while discussing Patterson et al.)
+    a = mu_s / mu_t  # In text (intro while discussing Patterson et al.)
     D = 1 / (3 * mu_t)  # Diffusion constant; Eqn. 3
+    mu_eff = np.sqrt(3 * mu_a / D)
 
-    # System Properties
-    n_rel = n_tissue / n_collection  # Relative refractive index; in text (preceding eqn. 7)
-    r_d = 1.440 * (n_rel ** (-2)) + 0.710 * (n_rel ** (-1)) + 0.668 + 0.0636 * n_rel  # Eqn. 9
-    A = (1 + r_d) / (1 - r_d)  # Eqn. 8
+    z = 1 / mu_t
+    zb = -2 * D
 
-    z_b = 2 * A * D  # In text (fluence zero point; boundary condition explanation following Eqn. 9)
-    z = 0  # In text (following solution explanation of eqn. 15)
-    z_0 = 1 / mu_t  # In text (preamble to Eqn. 18)
-
-    r1 = np.sqrt(((z - z_0) ** 2 + rho ** 2))  # Green's function for fluence parameter; Eqn. 11
-    r2 = np.sqrt(((z + z_0 + 2 * z_b) ** 2 + rho ** 2))  # Green's function solved for a point source; Eqn. 13
+    rho1 = np.sqrt(r ** 2 + z ** 2)
+    rho2 = np.sqrt(r ** 2 + (-z - 2 * zb) ** 2)
 
     # Green's Function for Diffuse Reflectance; Eqn. 15
-    R = (albedo / (4 * np.pi)) * (z_0 * (mu_eff + (1 / r1)) * (np.exp(-mu_eff * r1) / (r1 ** 2)) +
-                                  ((z_0 + 2 * z_b) * (mu_eff + (1 / r2)) * (np.exp(-mu_eff * r2) / (r2 ** 2))))
+    rd = (
+            (a / (4 * np.pi)) *
+            ((z * (1 + (mu_eff * rho1)) * np.exp(-mu_eff * rho1)) /
+             (rho1 ** 3)) +
+            (((z + (4 * D)) * (1 + (mu_eff * rho2)) * np.exp(-mu_eff * rho2)) /
+             (rho2 ** 3))
+    )
 
-    return R
+    return rd
+
+
+'''
+The base diffusion approximation must be extended to account for non-normal incidence and a finite source. To account 
+for the finite source, the reflectance is integrated across the beam.
+'''
+def darkfield_reflectance(r_bounds):
+
+    pass
+
+# Get some default values
+mu_s, mu_a, wl = calculate_mus()
+def integrated_reflectance(mu_s=mu_s, mu_a=mu_a, r_bounds=(0, ID), theta_bounds=THETA, beam_function=darkfield_footprint,
+                           n_tissue=1.33, n_collection=1.33, g=0.9):
+    if not iterable(r_bounds):
+        r_bounds = [r_bounds, r_bounds]
+    if not iterable(theta_bounds):
+        theta_bounds = [theta_bounds, theta_bounds]
+
+    A = beam_function(inner=r_bounds[0], outer=r_bounds[1], theta_min=theta_bounds[0], theta_max=theta_bounds[1])
+
+    def integrand(r, theta):
+        return (diffusion_approximation(mu_s=mu_s, mu_a=mu_a, theta=theta, r=r,
+                                        n_tissue=n_tissue, n_collection=n_collection, g=g)
+                * beam_function(inner=r_bounds[0], outer=r_bounds[1],
+                                theta_min=theta_bounds[0], theta_max=theta_bounds[1]))
+
+    integral, _ = dblquad(integrand, theta_bounds[0], theta_bounds[1], lambda _: r_bounds[0], lambda _: r_bounds[1])
+
 
 
 # TODO: Add LUT load and get value and update get_optical_properties to use it. Make it match the same inputs and

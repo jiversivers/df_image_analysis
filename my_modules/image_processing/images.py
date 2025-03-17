@@ -3,7 +3,13 @@ import os
 import xml.etree.ElementTree as ET
 
 import cv2 as cv
-import numpy as np
+try:
+    import cupy as np
+
+    if not np.is_available():
+        raise RuntimeError("CUDA not available; reverting to NumPy.")
+except (ImportError, RuntimeError) as e:
+    import numpy as np
 
 
 class ImageStack:
@@ -93,3 +99,4 @@ class HSDFMPMStack:
 
     def fit_krogh(self):
         # Find average distance from center of vasclature in hsdf_image.vascular_map to p50 for mpm_image NADH channel
+        pass

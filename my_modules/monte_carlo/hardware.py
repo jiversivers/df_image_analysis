@@ -1,5 +1,14 @@
-import numpy as np
-from numpy import iterable
+try:
+    import cupy as np
+    from cupy import iterable
+
+    if not np.is_available():
+        raise RuntimeError("CUDA not available; reverting to NumPy.")
+except (ImportError, RuntimeError) as e:
+    import numpy as np
+    from numpy import iterable
+
+    np.is_available = lambda: False  # Mock the `is_available` method for consistency
 
 # Hardware specs in cm
 ID = 0.16443276801785274
@@ -10,6 +19,20 @@ THETA = np.arctan(-OD / WD)  # rad
 NA = 1.0
 
 
+# Formulation for use in analytical modelling.
+# NOTE: This gives the beam _at_ a distance WD from where ID/OD were measured, presumably at the medium of measure.
+# theta_max serves as a compatibility placeholder, but is not used for darkfield_footprint.
+def darkfield_footprint(inner=ID, outer=OD, working_distance=WD, theta_min=THETA, theta_max=None):
+    # Calculate radii' at WD
+    inner = inner / 2 + working_distance * np.tan(theta_min)
+    outer = outer / 2 + working_distance * np.tan(theta_min)
+
+    # Calculate area of circles and total beam area
+    return np.pi * (outer ** 2 - inner ** 2)
+
+
+# Sampler for use in Monte Carlo modelling
+# NOTE: This samples the ring _at_ where ID/OD are measured from, presumably a distance WD above the medium of measure.
 def ring_pattern(r_bounds, angle_bounds):
     if not iterable(r_bounds):
         r_max = r_bounds

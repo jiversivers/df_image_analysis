@@ -27,7 +27,7 @@ class System:
     def __init__(self, *args, surrounding_n=1, illuminator=None, detector=(None, 0)):
         """
         Create a system of optical mediums and its surroundings that hold the optical properties and can determine the
-        medium of a location as well as interface crossing given two locations. The blocks are constructed top down in
+        medium of a location as well as interfaces crossing given two locations. The blocks are constructed top down in
         the order they are received from the top down (positive z is downward) starting at 0 and surrounded by infinite
         surroundings.
 
@@ -38,7 +38,7 @@ class System:
             - Dict of the system stack with OpticalMedium object keys and len=2 list of boundaries for respective
               object including surroundings
             - List of OpticalMedium object layers in order of stacking including surroundings
-            - Ndarray of the boundary (i.e. interface) z location between OpticalMedium objects, excluding +- infinite
+            - Ndarray of the boundary (i.e. interfaces) z location between OpticalMedium objects, excluding +- infinite
         4. Add surroundings to the bottom from z=system thickness to z= positive infinity if the last layer was not
         semi-infinite
 
@@ -55,7 +55,7 @@ class System:
         self.surroundings = OpticalMedium(n=surrounding_n, mu_s=0, mu_a=0, name='surroundings')
 
         # Add surroundings from -inf to 0
-        interface = 0  # Current interface location during stacking
+        interface = 0  # Current interfaces location during stacking
         self.stack = {(float('-inf'), interface): self.surroundings}  # Dict with tuple layer boundaries: layer object
         self.layer = [self.surroundings]  # List of layers in order of addition
         boundaries = []  # List of boundary depths between layers
@@ -124,15 +124,15 @@ class System:
 
     def in_medium(self, location):
         """
-        Return the medium(s) that are at the queried coordinate. If the coordinate is an interface location, the mediums
-        that makeup the interface are returned as a tuple, this includes boundary interfaces being returned with False
+        Return the medium(s) that are at the queried coordinate. If the coordinate is an interfaces location, the mediums
+        that makeup the interfaces are returned as a tuple, this includes boundary interfaces being returned with False
         on the surroundings side.
 
         ### Process
         1. Get the z-coordinate from the input
         2. Check it against boundaries of each medium of the system until it is found that either:
             - It is between any of the boundaries, it is in the medium within those boundaries
-            - It is at a boundary, it is "in" the two mediums that make up that interface
+            - It is at a boundary, it is "in" the two mediums that make up that interfaces
         3. Break and return the medium(s) of the queried point.
 
         ### Parameters:
@@ -140,7 +140,7 @@ class System:
 
         ### Returns
         :return in_: (medium or tuple of mediums): The medium of the queried z-coordinate or a tuple of interfaces if
-                     the coordinate is at an interface
+                     the coordinate is at an interfaces
         """
 
         z = location[2] if iterable(location) else location
@@ -164,17 +164,17 @@ class System:
 
     def interface_crossed(self, location1, location2):
         """
-        Determines the first interface crossed when moving between two locations, considering only the z-coordinates.
+        Determines the first interfaces crossed when moving between two locations, considering only the z-coordinates.
 
-        This method checks if any interface boundaries lie between the given z-coordinates. If an interface is crossed,
-        the method calculates its z-location and identifies the two mediums forming the interface.
+        This method checks if any interfaces boundaries lie between the given z-coordinates. If an interfaces is crossed,
+        the method calculates its z-location and identifies the two mediums forming the interfaces.
 
         ### Process:
         1. Identify boundaries that fall between the start and end z-coordinates.
         2. Compute the distance from the start z-coordinate to each boundary.
         3. Apply a mask to filter boundaries that are actually crossed.
-        4. Select the closest crossed boundary as the interface plane.
-        5. Determine the two mediums making up the interface by slightly shifting the plane's z-coordinate:
+        4. Select the closest crossed boundary as the interfaces plane.
+        5. Determine the two mediums making up the interfaces by slightly shifting the plane's z-coordinate:
            - Backwards (toward the start) to find the first medium.
            - Forwards (away from the start) to find the second medium.
 
@@ -183,9 +183,9 @@ class System:
         - :param location2: Ending location of the query.
 
         ### Returns:
-        - :return interface: (tuple): The two media forming the crossed interface, or an empty list `[]` if no
-                              interface is crossed.
-        - :return plane: (float or bool): The z-coordinate of the crossed interface if one is found, otherwise `False`.
+        - :return interfaces: (tuple): The two media forming the crossed interfaces, or an empty list `[]` if no
+                              interfaces is crossed.
+        - :return plane: (float or bool): The z-coordinate of the crossed interfaces if one is found, otherwise `False`.
         """
 
         # Get z coords
@@ -219,7 +219,7 @@ class System:
         else:
             plane = None
 
-        # If an interface is crossed, get the two mediums that make it up
+        # If an interfaces is crossed, get the two mediums that make it up
         interface = []
         if plane is not None:
             # Determine the mediums on either side by simply bumping the coordinates forward and backward slightly
@@ -283,7 +283,7 @@ class IndexableProperty(np.ndarray):
 
 class Photon:
 
-    def __init__(self, wavelength,
+    def __init__(self, wavelength, n=1,
                  system=None,
                  directional_cosines=(0, 0, 1),
                  location_coordinates=(0, 0, 0),
@@ -297,8 +297,10 @@ class Photon:
                  tir_limit=float('inf')):
 
         # Init current_photon state
+        self.batch_size = n
         self.wavelength = wavelength
         self.system = system
+
         self.directional_cosines = directional_cosines
         self.location_coordinates = location_coordinates
         self.exit_location = None
@@ -397,14 +399,13 @@ class Photon:
     @weight.setter
     def weight(self, weight):
         self._weight = weight
-        if 0 < weight < 0.005:
-            self.russian_roulette()
+        rr_check = (0 < weight) & (weight < 0.005)
+        if np.any(rr_check):
+            self.russian_roulette(rr_check)
 
-    def russian_roulette(self):
-        if np.random.rand() >= (1 / self.russian_roulette_constant):
-            self._weight = 0
-        else:
-            self.weight = self.weight * self.russian_roulette_constant
+    def russian_roulette(self, mask):
+        survival = np.random.rand(np.count_nonzero(mask)) < (1 / self.russian_roulette_constant)
+        self._weight[mask] = np.where(survival, self._weight[mask] * self.russian_roulette_constant, 0)
 
     @property
     def medium(self):
@@ -415,155 +416,141 @@ class Photon:
 
     @property
     def is_terminated(self):
-        self._is_terminated = (self.medium == self.system.surroundings or self.weight <= 0.0)
+        self._is_terminated = np.where((self.medium == self.system.surroundings) | (self.weight <= 0.0), True, False)
         return self._is_terminated
-
-    @is_terminated.setter
-    def is_terminated(self, value):
-        self._is_terminated = value
 
     @property
     def headed_into(self):
-        bumped_coords = self.location_coordinates
-        medium = []
-        while isinstance(medium, (list, tuple)):
-            medium = self.system.in_medium(bumped_coords)
-            # Increment coordinates smallest possible amount in same direction of the current_photon
-            bumped_coords = np.nextafter(bumped_coords, bumped_coords + self.directional_cosines)
+        bumped_coords = self.location_coordinates.copy()
+        medium = np.array([None] * len(bumped_coords), dtype=object)  # Placeholder for batch results
+
+        # While some photons still have (list, tuple) as their medium, update them
+        active = np.ones(len(bumped_coords), dtype=bool)
+
+        while np.any(active):
+            # Query medium for only active photons
+            new_medium = np.array(self.system.in_medium(bumped_coords[active]), dtype=object)
+
+            # Update those that have exited the list/tuple stage
+            mask_done = ~np.array([isinstance(m, (list, tuple)) for m in new_medium])
+            medium[active] = np.where(mask_done, new_medium, medium[active])
+
+            # Stop processing photons that have found their medium
+            active[active] = ~mask_done
+
+            # Increment active photons by a small step in their direction
+            bumped_coords[active] = np.nextafter(bumped_coords[active],
+                                                 bumped_coords[active] + self.directional_cosines[active])
+
         return medium
 
     def move(self, step=None):
-        while True:
-            # Get current state
-            mu_t = self.medium.mu_t_at(self.wavelength)
-            dir_cos = self.directional_cosines
-            loc = self.location_coordinates
+        # Get current state
+        mu_t = self.medium.mu_t_at(self.wavelength)
+        dir_cos = self.directional_cosines
+        loc = self.location_coordinates
 
-            # Compute propagation step
-            if mu_t > 0:
-                # If scattering occurs, step is sampled from the distribution
-                step = -np.log(np.random.random()) / mu_t if step is None else step
-            else:
-                # If in a medium with mu_t = 0, force move to next interface
-                step = float('inf')
+        # If scattering occurs, step is sampled from the distribution
+        if step is None:
+            step = np.where(mu_t > 0, -np.log(np.random.rand(len(step_in))) / mu_t, float('inf'))
+        new_loc = loc + step[:, np.newaxis] * dir_cos
 
-            # If interface will be crossed, go to it, reflect/refract and restart
-            interface, plane = self.system.interface_crossed(loc, loc + step * dir_cos)
-            if interface and plane is not None:
-                # Compute step to interface
-                interface_step = (plane - loc[2]) / dir_cos[2] if dir_cos[2] != 0 else float('inf')
+        # Determine which photons cross an interfaces
+        interface, plane = self.system.interface_crossed(loc, new_loc)
+        crossed = (interface is not None) & (plane is not None)
+        interface_steps = np.where(crossed, (plane - loc[:, 2]) / dir_cos[:, 2], float('inf'))
 
-                if interface_step < step:
-                    # Move to the interface
-                    self.location_coordinates = loc + interface_step * dir_cos
+        # Find photons that should move to the interfaces instead
+        move_to_interface = interface_steps < step
+        loc[move_to_interface] += interface_steps[move_to_interface, np.newaxis] * dir_cos[move_to_interface]
 
-                    # Handle reflection/refraction
-                    self.reflect_refract(interface)
+        # Reflect/refract photons at interfaces
+        if np.any(move_to_interface):
+            self.reflect_refract(interface, move_to_interface)
 
-                    # Update history
-                    self.location_history.append((self.location_coordinates, self.weight))
+        # Update history for all photons
+        self.location_history.extend(zip(loc, self.weight))
 
-                    # Restart loop
-                    step = None
-                    continue
+        # Check if any photons exited
+        exit_mask = ~((self.system.boundaries[0] < loc[:, 2]) & (loc[:, 2] < self.system.boundaries[-1]))
 
-            # If no interface is crossed, update location
-            self.location_coordinates = loc + step * dir_cos
+        if np.any(exit_mask):
+            self.exit_location = np.where(
+                exit_mask[:, np.newaxis], self.location_history[-2][0], False
+            )
+            self.exit_weight = np.where(exit_mask, self.location_history[-2][1], False)
 
-            # Check if this got just to an interface and need reflection/refraction
-            interface = self.system.in_medium(self.location_coordinates)
-            if isinstance(interface, tuple):
-                self.reflect_refract(interface)
-
-            # Update history and end loop
-            self.location_history.append((self.location_coordinates, self.weight))
-            break
-
-        # Check termination (exiting the system)
-        if not (self.system.boundaries[0] < self.location_coordinates[2] < self.system.boundaries[-1]):
-            self.exit_location = self.location_history[-2][0] if len(
-                self.location_history) > 1 else self.location_coordinates
-            self.exit_weight = self.weight
-
-            # Detector check
-            if self.system.detector and self.exit_location[2] == self.system.detector_location:
+            # Check if any exited photons hit a detector
+            detector_mask = exit_mask & (loc[:, 2] == self.system.detector_location)
+            if np.any(detector_mask):
                 self.system.detector(self)
 
-            # Reflection or transmission
-            if self.location_coordinates[2] < self.system.boundaries[0]:  # Reflection
-                self.R += self.weight
-            elif self.location_coordinates[2] > self.system.boundaries[-1]:  # Transmission
-                self.T += self.weight
+            # Handle reflection or transmission
+            reflected = loc[:, 2] < self.system.boundaries[0]
+            transmitted = loc[:, 2] > self.system.boundaries[-1]
 
-            # Photon is now terminated
-            self.weight = 0
+            self.R[reflected] += self.weight[reflected]
+            self.T[transmitted] += self.weight[transmitted]
 
-    def reflect_refract(self, interface):
+            # Terminate exited photons
+            self.weight[exit_mask] = 0
+
+    def reflect_refract(self, interfaces, mask):
         # Get incidence state
-        mu_x, mu_y, mu_z_i = self.directional_cosines
-        n1 = interface[0].n
-        n2 = interface[1].n
+        mu_x, mu_y, mu_z_i = self.directional_cosines[mask].T
+        mu_z_t = np.zeros_like(mu_z_i)
+        n1 = interfaces[0].n[mask]
+        n2 = interfaces[1].n[mask]
 
         # Calculate refraction
         sin_theta_t = n1 / n2 * np.sqrt(1 - mu_z_i ** 2)
 
         # TIR
-        if sin_theta_t > 1:
-            mu_z_t = -mu_z_i
-            self.tir_count += 1
-            if self.tir_count > self.tir_limit:
-                self.A += self.weight
-                self.weight = 0
+        tir_mask = sin_theta_t > 1
+        mu_z_t[tir_mask] = -mu_z_i[tir_mask]
+        self.tir_count[mask] = np.where(tir_mask, self.tir_count[mask] + 1, self.tir_count[mask])
+        stop_tir = self.tir_count[mask] > self.tir_limit[mask]
+        self.A[mask] = np.where(stop_tir, self.A[mask] + self.weight[mask], self.A[mask])
+        self.weight[mask] = np.where(stop_tir, 0, self.weight[mask])
 
-        # Snell's law + Fresnel
-        else:
-            mu_z_t = np.sqrt(1 - sin_theta_t ** 2)
+        # Snell's + Fresnel's Law
+        refract_mask = ~tir_mask
+        mu_z_t_masked = np.sqrt(1 - sin_theta_t[refract_mask] ** 2)
 
-            # Calculate reflection
-            rs = np.abs(((n1 * np.abs(mu_z_i)) - (n2 * mu_z_t)) / ((n1 * np.abs(mu_z_i)) + (n2 * mu_z_t))) ** 2
-            rp = np.abs(((n2 * mu_z_t) - (n1 * np.abs(mu_z_i))) / ((n1 * np.abs(mu_z_i)) + (n2 * mu_z_t))) ** 2
-            specular_reflection = 0.5 * (rs + rp) * self.weight
+        # Extract only the masked refractive indices for masked values
+        n1_masked = n1[refract_mask]
+        n2_masked = n2[refract_mask]
+        abs_mu_z_i = np.abs(mu_z_i[refract_mask])
+        mu_z_t_masked = mu_z_t_masked
 
-            mu_z_t = np.sign(mu_z_i) * mu_z_t  # Ensure correct sign
+        rs = np.abs(((n1_masked * abs_mu_z_i) - (n2_masked * mu_z_t_masked)) /
+                    ((n1_masked * abs_mu_z_i) + (n2_masked * mu_z_t_masked))) ** 2
+        rp = np.abs(((n2_masked * mu_z_t_masked) - (n1_masked * abs_mu_z_i)) /
+                    ((n1_masked * abs_mu_z_i) + (n2_masked * mu_z_t_masked))) ** 2
+        specular_reflection = 0.5 * (rs + rp) * self.weight[refract_mask]
 
-            # Inject secondary current_photon to account for reflected portion with current direciton and location
-            if self.recurse and self.recursion_depth <= self.recursion_limit:
-                secondary_photon = self.copy(directional_cosines=(mu_x, mu_y, -mu_z_i),
-                                             weight=specular_reflection,
-                                             recursion_depth=self.recursion_depth + 1)
-                recursion_error = None
-                try:
-                    secondary_photon.simulate()
-                except RecursionError as e:
-                    recursion_error = e
-                finally:
-                    if self.keep_secondary_photons:
-                        self.secondary_photons.append(secondary_photon)
-                        for photon in secondary_photon.secondary_photons:
-                            self.secondary_photons.append(photon)
-                    self.recursed_photons = secondary_photon.recursed_photons + 1
-                    if recursion_error is not None:
-                        raise recursion_error
+        mu_z_t[refract_mask] *= np.sign(mu_z_i[refract_mask])  # Ensure correct sign
 
-                self.T += secondary_photon.T
-                self.R += secondary_photon.R
-                self.A += secondary_photon.A
+        # If the reflected fraction will be reflected out, add it to reflected count, Else add it to transmitted
+        reflected_out = mu_z_i[refract_mask] > 0
+        transmitted_out = mu_z_i[refract_mask] < 0
+        R_temp = self.R[mask].copy()
+        R_temp[refract_mask] += specular_reflection * reflected_out
+        self.R[mask] = R_temp
+        T_temp = self.T[mask].copy()
+        T_temp[refract_mask] += specular_reflection * transmitted_out
+        self.T[mask] += T_temp
 
-            else:
-                # If the reflected fraction will be reflected out, add it to reflected count,
-                if mu_z_i > 0:
-                    self.R += specular_reflection
-                # Else add it to transmitted
-                elif mu_z_i < 0:
-                    self.T += specular_reflection
+        # Updated for transmitted portion
+        mu_x[refract_mask] *= n1[refract_mask] / n2[refract_mask]
+        mu_y[refract_mask] *= n1[refract_mask] / n2[refract_mask]
 
-            # Updated for transmitted portion
-            mu_x *= n1 / n2
-            mu_y *= n1 / n2
-            self.weight = self.weight - specular_reflection
+        w_temp = self.weight[mask].copy()
+        w_temp[refract_mask] -= specular_reflection
+        self.weight[mask] = w_temp
 
         # Send to setter for normalization
-        self.directional_cosines = [mu_x, mu_y, mu_z_t]
+        self.directional_cosines[mask] = np.column_stack((mu_x, mu_y, mu_z_t))
 
     # TODO: Add support for fluorescence-based secondary photons
     def absorb(self):
@@ -574,7 +561,7 @@ class Photon:
     def scatter(self, theta_phi=None):
         if theta_phi is None:
             # Sample random scattering angles from distribution
-            [xi, zeta] = np.random.rand(2)
+            [xi, zeta] = np.random.rand(self.batch_size, 2)
             if self.medium.g != 0.0:
                 lead_coeff = 1 / (2 * self.medium.g)
                 term_2 = self.medium.g ** 2
@@ -588,19 +575,32 @@ class Photon:
             theta, phi = theta_phi
 
         # Update direction cosines
-        mu_x, mu_y, mu_z = self.directional_cosines
-        new_directional_cosines = np.array([0, 0, 0], dtype=np.float64)
-        if np.abs(mu_z) > 0.999:
-            new_directional_cosines[0] = np.sin(theta) * np.cos(phi)
-            new_directional_cosines[1] = np.sin(theta) * np.sin(phi)
-            new_directional_cosines[2] = np.sign(mu_z) * np.cos(theta)
-        else:
-            deno = np.sqrt(1 - (mu_z ** 2))
-            numr1 = (mu_x * mu_y * np.cos(phi)) - (mu_y * np.sin(phi))
-            new_directional_cosines[0] = (np.sin(theta) * (numr1 / deno)) + (mu_x * np.cos(theta))
-            numr2 = (mu_y * mu_z * np.cos(phi)) + (mu_x * np.sin(phi))
-            new_directional_cosines[1] = (np.sin(theta) * (numr2 / deno)) + (mu_y * np.cos(theta))
-            new_directional_cosines[2] = -(np.sin(theta) * np.cos(phi) * deno) + mu_z * np.cos(theta)
+        mu_x, mu_y, mu_z = self.directional_cosines.T
+        new_directional_cosines = np.zeros((self.batch_size, 3), dtype=np.float64)
+
+        # For near-vertical photons (simplify for stability)
+        vertical = np.abs(mu_z) > 0.999
+        new_directional_cosines[vertical, 0] = np.sin(theta[vertical]) * np.cos(phi[vertical])
+        new_directional_cosines[vertical, 1] = np.sin(theta[vertical]) * np.sin(phi[vertical])
+        new_directional_cosines[vertical, 2] = np.sign(mu_z[vertical]) * np.cos(theta[vertical])
+
+        # For all others
+        nonvertical = ~vertical
+        deno = np.sqrt(1 - (mu_z[nonvertical] ** 2))
+
+        numr1 = (mu_x[nonvertical] * mu_y[nonvertical] * np.cos(phi[nonvertical])) - (
+                mu_y[nonvertical] * np.sin(phi[nonvertical]))
+
+        new_directional_cosines[nonvertical, 0] = (np.sin(theta[nonvertical]) * (numr1 / deno)) + (
+                mu_x[nonvertical] * np.cos(theta[nonvertical]))
+
+        numr2 = (mu_y[nonvertical] * mu_z[nonvertical] * np.cos(phi)) + (mu_x[nonvertical] * np.sin(phi[nonvertical]))
+
+        new_directional_cosines[nonvertical, 1] = (np.sin(theta[nonvertical]) * (numr2 / deno)) + (
+                mu_y[nonvertical] * np.cos(theta[nonvertical]))
+
+        new_directional_cosines[nonvertical, 2] = -(np.sin(theta[nonvertical]) * np.cos(phi[nonvertical]) * deno) + (
+                mu_z[nonvertical] * np.cos(theta[nonvertical]))
 
         # Update directional cosines with new direciton (done at once for normalization consistency)
         self.directional_cosines = new_directional_cosines

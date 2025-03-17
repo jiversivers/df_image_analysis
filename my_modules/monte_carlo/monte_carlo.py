@@ -367,7 +367,7 @@ class Photon:
     def __repr__(self):
         out = ''
         for key, val in self.__dict__.items():
-            out += f'{key.strip('_')}: {val}\n'
+            out += f"{key.strip('_')}: {val}\n"
         return out
 
     def simulate(self):

@@ -28,8 +28,7 @@ cd $SLURM_SUBMIT_DIR || exit
 
 
 echo "Copying files..."
-mkdir /scratch/$SLURM_JOB_ID
-rsync -avq /home/jdivers/df_image_analysis/jobs/$SLURM_SUBMIT_DIR /scratch/$SLURM_JOB_ID
+rsync -avq $SLURM_SUBMIT_DIR/*.py /scratch/$SLURM_JOB_ID
 rsync -avq /home/jdivers/df_image_analysis/my_modules /scratch/$SLURM_JOB_ID
 wait
 

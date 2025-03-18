@@ -708,7 +708,6 @@ class Photon:
             phi = 2 * np.pi * zeta
         else:
             theta, phi = theta_phi if isinstance(theta_phi, (tuple, list)) else zip(theta_phi)
-
         # Update direction cosines
         mu_x, mu_y, mu_z = self.directional_cosines.T
         new_directional_cosines = np.zeros((self.batch_size, 3), dtype=np.float64)
@@ -716,25 +715,28 @@ class Photon:
         # For near-vertical photons (simplify for stability)
         vertical = np.abs(mu_z) > 0.999
         new_directional_cosines[vertical, 0] = np.sin(theta[vertical]) * np.cos(phi[vertical])
-        new_directional_cosines[vertical, 1] = np.sin(theta[vertical]) * np.sin(phi[vertical])
+        new_directional_cosines[vertical, 1] = np.sign(mu_z[vertical]) * np.sin(theta[vertical]) * np.sin(phi[vertical])
         new_directional_cosines[vertical, 2] = np.sign(mu_z[vertical]) * np.cos(theta[vertical])
 
         # For all others
         nonvertical = ~vertical
         deno = np.sqrt(1 - (mu_z[nonvertical] ** 2))
 
-        numr1 = (mu_x[nonvertical] * mu_y[nonvertical] * np.cos(phi[nonvertical])) - (
+        # mu_x updated
+        numr = (mu_x[nonvertical] * mu_z[nonvertical] * np.cos(phi[nonvertical])) - (
                 mu_y[nonvertical] * np.sin(phi[nonvertical]))
 
-        new_directional_cosines[nonvertical, 0] = (np.sin(theta[nonvertical]) * (numr1 / deno)) + (
+        new_directional_cosines[nonvertical, 0] = (np.sin(theta[nonvertical]) * (numr / deno)) + (
                 mu_x[nonvertical] * np.cos(theta[nonvertical]))
 
-        numr2 = (mu_y[nonvertical] * mu_z[nonvertical] * np.cos(phi[nonvertical])) + (
-                    mu_x[nonvertical] * np.sin(phi[nonvertical]))
+        # mu_y update
+        numr = (mu_y[nonvertical] * mu_z[nonvertical] * np.cos(phi[nonvertical])) + (
+                mu_x[nonvertical] * np.sin(phi[nonvertical]))
 
-        new_directional_cosines[nonvertical, 1] = (np.sin(theta[nonvertical]) * (numr2 / deno)) + (
+        new_directional_cosines[nonvertical, 1] = (np.sin(theta[nonvertical]) * (numr / deno)) + (
                 mu_y[nonvertical] * np.cos(theta[nonvertical]))
 
+        # mu_z update
         new_directional_cosines[nonvertical, 2] = -(np.sin(theta[nonvertical]) * np.cos(phi[nonvertical]) * deno) + (
                 mu_z[nonvertical] * np.cos(theta[nonvertical]))
 
@@ -743,23 +745,29 @@ class Photon:
 
     def plot_path(self, project_onto=None, axes=None, ignore_outside=True):
         project_onto = ['xz', 'yz', 'xy'] if project_onto == 'all' else project_onto
-        project_onto = [project_onto] if isinstance(project_onto, (str)) or project_onto is None else project_onto
-        data = {'x': [], 'y': [], 'z': []}
-        for loc in self.location_history:
-            if ignore_outside and (loc[0][2] < self.system.boundaries[0] or loc[0][2] > self.system.boundaries[-1]):
-                break
-            data['x'].append(loc[0][0])
-            data['y'].append(loc[0][1])
-            data['z'].append(loc[0][2])
+        project_onto = [project_onto] if isinstance(project_onto, str) or project_onto is None else project_onto
+
+        location_history = np.array(self.location_history)  # Convert to NumPy array for vectorized operations
+        batch_size, time_steps, _ = location_history.shape  # Expect shape (batch, time, 3)
+
+        # Boundaries for filtering
+        z_min, z_max = self.system.boundaries[0], self.system.boundaries[-1]
+
+        # Ignore photons outside z-boundaries (vectorized masking)
+        if ignore_outside:
+            valid = (location_history[:, :, 2] >= z_min) & (location_history[:, :, 2] <= z_max)
+            location_history = np.where(valid[..., None], location_history, np.nan)  # Mask out invalid positions
 
         fig = plt.figure(figsize=(8 * len(project_onto), 8)) if not plt.get_fignums() else plt.gcf()
+
         if project_onto[0]:
             axes = [fig.add_subplot(1, len(project_onto), i + 1) for i in
                     range(len(project_onto))] if axes is None else axes
             for ax, projection in zip(axes, project_onto):
-                x = data[projection[0]]
-                y = data[projection[1]]
-                ax.plot(x, y, label=projection)
+                for i in range(batch_size):  # Iterate over photons
+                    x, y = location_history[i, :, 'xyz'.index(projection[0])], location_history[i, :,
+                                                                               'xyz'.index(projection[1])]
+                    ax.plot(x, y, label=f'Photon {i + 1}')
                 ax.set_title(f'Projected onto {projection}-plane')
                 ax.set_xlabel(f'Photon Displacement in {projection[0]}-direction (cm)')
                 ax.set_ylabel(f'Photon Displacement in {projection[1]}-direction (cm)')
@@ -767,11 +775,13 @@ class Photon:
                     ax.invert_yaxis()
         else:
             axes = fig.add_subplot(projection='3d') if axes is None else axes
-            axes.plot(data['x'], data['y'], data['z'])
-            axes.set_title(f'Photon Path')
-            axes.set(xlabel=f'Photon Displacement in x-direction (cm)')
-            axes.set(ylabel=f'Photon Displacement in y-direction (cm)')
-            axes.set(zlabel=f'Photon Displacement in z-direction (cm)')
+            for i in range(batch_size):
+                axes.plot(location_history[i, :, 0], location_history[i, :, 1], location_history[i, :, 2],
+                          label=f'Photon {i + 1}')
+            axes.set_title('Photon Paths')
+            axes.set_xlabel('Photon Displacement in x-direction (cm)')
+            axes.set_ylabel('Photon Displacement in y-direction (cm)')
+            axes.set_zlabel('Photon Displacement in z-direction (cm)')
             if not axes.zaxis_inverted():
                 axes.invert_zaxis()
 

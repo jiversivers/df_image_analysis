@@ -3,10 +3,9 @@ from __future__ import annotations
 import copy
 import warnings
 from numbers import Real
-from typing import Union, List, Optional, Iterable, Tuple, Callable
+from typing import Union, Optional, Iterable, Tuple, Callable
 
 from cupy.typing import NDArray
-from fontTools.feaLib import location
 from matplotlib import pyplot as plt, animation
 
 from my_modules.monte_carlo.hardware import ring_pattern, cone_of_acceptance, ID, OD, THETA
@@ -97,7 +96,7 @@ class System:
     def __init__(self, *args,
                  surrounding_n: Real = 1,
                  illuminator: Optional[Illumination] = None,
-                 detector: Optional[Tuple[Detector, Real]] = (None, None)):
+                 detector: Optional[Tuple[Detector, Real]] = (None, None)) -> None:
         """
         Create a system of optical mediums and its surroundings that hold the optical properties and can determine the
         medium of a location as well as interfaces crossing given two locations. The blocks are constructed top down in
@@ -153,10 +152,10 @@ class System:
 
         self.boundaries = np.asarray(boundaries)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return ''.join([f' <-- {bound[0]} --> {layer}' for bound, layer in self.stack.items()])
 
-    def __str__(self):
+    def __str__(self) -> str:
         stack = '\n'
         space = 0
         for bound, layer in self.stack.items():
@@ -188,13 +187,13 @@ class System:
         border = ' ' + '_' * (space - 2) + ' '
         return border + stack + border
 
-    def beam(self, n: int = 50000, **kwargs):
+    def beam(self, n: int = 50000, **kwargs) -> Photon:
         photon = self.illuminator.photon(n=n, system=self)
         for key, val in kwargs.items():
             setattr(photon, key, val)
         return photon
 
-    def in_medium(self, location: Iterable[Real]):
+    def in_medium(self, location: Iterable[Real]) -> NDArray[Union[OpticalMedium, Tuple[OpticalMedium, OpticalMedium]]]:
         """
         Return the medium(s) that are at the queried coordinate. If the coordinate is an interfaces location, the mediums
         that makeup the interfaces are returned as a tuple, this includes boundary interfaces being returned with False
@@ -214,11 +213,11 @@ class System:
         :return in_: (medium or tuple of mediums): The medium of the queried z-coordinate or a tuple of interfaces if
                      the coordinate is at an interfaces
         """
-
-        z = np.asarray(location) if np.shape(location)[0] == 1 else np.asarray(location)[:, 2]
+        location = np.asarray(location)
+        z = location if np.ndim(location) == 1 else np.asarray(location)[:, 2]
         in_medium = np.empty_like(z, dtype=object)
-        in_medium = np.where(z == float('inf'), self.layer[0], in_medium)
-        in_medium = np.where(z == float('-inf'), self.layer[-1], in_medium)
+        in_medium = np.where(z == float('inf'), self.surroundings, in_medium)
+        in_medium = np.where(z == float('-inf'), self.surroundings, in_medium)
 
         for bound, medium in self.stack.items():
             mask_inside = np.logical_and(bound[0] < z, z < bound[1])
@@ -231,13 +230,14 @@ class System:
                 z_pos_move = np.nextafter(z[mask_boundary], float('inf'))
                 output1 = self.in_medium(z_neg_move)
                 output2 = self.in_medium(z_pos_move)
-                in_medium[mask_boundary] = np.array(list(zip(output1, output2)), dtype=object)
+                for idx in np.where(mask_boundary)[0]:
+                    in_medium[idx] = (output1, output2)
 
         return in_medium
 
     def interface_crossed(self,
                           location0: Iterable[Real],
-                          location1: Iterable[Real]):
+                          location1: Iterable[Real]) -> Union[Tuple[Union[OpticalMedium, ()], Union[Real, None]]]:
         """
         Determines the first interfaces crossed when moving between two locations, considering only the z-coordinates.
 
@@ -274,14 +274,11 @@ class System:
         z0 = np.where(is_boundary1, np.nextafter(z0, z1), z0)
         z1 = np.where(is_boundary2, np.nextafter(z1, z0), z1)
 
-        # Get direction of vector
-        z_dir = np.sign(z1 - z0)
-
         # Sort for easier logic
         z_sorted = np.sort(np.stack((z0, z1), axis=-1), axis=-1)
 
         # Check if any boundaries fall between the zs and put into nd boolean array to use as a mask
-        boundaries = np.asarray(self.boundaries)  # Ensure boundaries is a NumPy array
+        boundaries = np.asarray(self.boundaries, dtype=np.float64)
         crossed_mask = (z_sorted[..., 0, None] < boundaries) & (boundaries < z_sorted[..., 1, None])
 
         # Determine closest crossed boundary (if any)
@@ -289,20 +286,25 @@ class System:
         dist_from_start[~crossed_mask] = np.inf  # Ignore non-crossed boundaries
 
         closest_idx = np.argmin(dist_from_start, axis=-1)
-        plane = np.where(np.any(crossed_mask, axis=-1), boundaries[closest_idx], None)
+
+        plane = np.where(np.any(crossed_mask, axis=-1), boundaries[closest_idx], None).astype(np.float64)
 
         # Determine mediums at the interface
         has_interface = np.any(crossed_mask, axis=-1)
-        interface1 = np.where(has_interface, self.in_medium(np.nextafter(plane, z0)), None)
-        interface2 = np.where(has_interface, self.in_medium(np.nextafter(plane, z1)), None)
+        if np.any(has_interface):
+            interface0 = np.where(has_interface, self.in_medium(np.nextafter(plane, z0)), None)
+            interface1 = np.where(has_interface, self.in_medium(np.nextafter(plane, z1)), None)
 
-        # Combine mediums into tuples or return empty tuples where no interface was crossed
-        interfaces = np.where(has_interface, list(zip(interface1, interface2)), ())
-
-        return interfaces, plane
+            # Combine mediums into tuples or return empty tuples where no interface was crossed
+            interfaces = np.array(
+                [tuple(pair) if valid else () for valid, pair in zip(has_interface, zip(interface0, interface1))],
+                dtype=object)
+            return interfaces, plane
+        else:
+            return None, None
 
     def represent_on_axis(self,
-                          ax: plt.axes.Axes = None):
+                          ax: plt.axes.Axes = None) -> None:
         if ax is None:
             ax = plt.gca()
         lim = [
@@ -329,10 +331,10 @@ class System:
 class IndexableProperty(np.ndarray):
     def __new__(cls,
                 arr: Iterable,
-                normalize: bool = False):
+                normalize: bool = False) -> IndexableProperty:
         obj = np.asarray(arr, dtype=np.float64).view(cls)
         obj.normalize = normalize
-        obj /= np.linalg.norm(obj) if normalize else 1
+        obj /= np.linalg.norm(obj, axis=1)[:, np.newaxis] if normalize else 1
         return obj
 
     def __array_finalize__(self, obj: Optional[NDArray]):
@@ -348,14 +350,20 @@ class IndexableProperty(np.ndarray):
     def normalize(self, value: bool):
         self._normalize = value
         if self._normalize:
-            self /= np.linalg.norm(self)
+            self /= np.linalg.norm(self, axis=1)[:, np.newaxis]
 
     def __setitem__(self,
                     index: int,
                     value: Real):
         super().__setitem__(index, value)
         if self.normalize:
-            self /= np.linalg.norm(self)
+            self /= np.linalg.norm(self, axis=1)[:, np.newaxis]
+
+    def __getitem__(self, index: int) -> IndexableProperty[Real]:
+        item = super().__getitem__(index)
+        if isinstance(item, IndexableProperty):
+            item.normalize = False
+        return item
 
 
 class Photon:
@@ -390,7 +398,7 @@ class Photon:
         # Setup batched attributes
         directional_cosines = np.asarray(directional_cosines, dtype=np.float64)
         if np.ndim(directional_cosines) == 1:
-            directional_cosines = np.repeat(directional_cosines[np.newaxis, ...], n)
+            directional_cosines = np.repeat(directional_cosines[np.newaxis, ...], n, axis=0)
         else:
             assert np.shape(directional_cosines)[0] == n and np.shape(directional_cosines)[1] == 3, ValueError(
                 'Directional cosine input is incompatible with batch size. Input bust be shape (3,) or (n, 3) where n '
@@ -400,7 +408,7 @@ class Photon:
 
         location_coordinates = np.asarray(location_coordinates, dtype=np.float64)
         if np.ndim(location_coordinates) == 1:
-            location_coordinates = np.repeat(location_coordinates[np.newaxis, ...], n)
+            location_coordinates = np.repeat(location_coordinates[np.newaxis, ...], n, axis=0)
         else:
             assert np.shape(location_coordinates)[0] == n and np.shape(location_coordinates)[1] == 3, ValueError(
                 'Location coordinate input is incompatible with batch size. Input bust be shape (3,) or (n, 3) where n '
@@ -410,7 +418,7 @@ class Photon:
 
         weight = np.asarray(weight, dtype=np.float64)
         if not iterable(weight) or np.shape(weight) == (1,):
-            weight = np.repeat(weight[np.newaxis, ...], n)
+            weight = np.repeat(weight[np.newaxis, ...], n, axis=0)
         else:
             assert np.shape(weight)[0] == n and np.shape(weight)[1] == 1, ValueError(
                 'Weight input is incompatible with batch size. Input bust be shape (1,) or (n, 1) where n '
@@ -434,11 +442,11 @@ class Photon:
         # Init trackers
         self.location_history = self.location_coordinates[..., np.newaxis].copy()
         self.weight_history = self.weight[..., np.newaxis].copy()
-        self.recursed_photons = np.zero(n, dtype=int)
-        self.tir_count = np.zero(n, dtype=int)
-        self.A = np.zero(n, dtype=np.float64)
-        self.T = np.zero(n, dtype=np.float64)
-        self.R = np.zero(n, dtype=np.float64)
+        self.recursed_photons = np.zeros(n, dtype=int)
+        self.tir_count = np.zeros(n, dtype=int)
+        self.A = np.zeros(n, dtype=np.float64)
+        self.T = np.zeros(n, dtype=np.float64)
+        self.R = np.zeros(n, dtype=np.float64)
 
     # EXPLANATION OF INDEXABLE_PROPERTIES
     # When one of these properties, obj, is used in the form obj = value, it will call the setter, which sets the
@@ -446,22 +454,22 @@ class Photon:
     # called to return obj. Then, the indexable_property __setitem__ is called to update obj. This should ensure that
     # these properties are always np.ndarrays and (when set) are normalized.
     @property
-    def directional_cosines(self):
+    def directional_cosines(self) -> IndexableProperty[Real]:
         return self._directional_cosines
 
     @directional_cosines.setter
-    def directional_cosines(self, value: Iterable[Real]):
+    def directional_cosines(self, value: Iterable[Real]) -> None:
         self._directional_cosines = IndexableProperty(value, normalize=True)
 
     @property
-    def location_coordinates(self):
+    def location_coordinates(self) -> IndexableProperty[Real]:
         return self._location_coordinates
 
     @location_coordinates.setter
-    def location_coordinates(self, value: Iterable[Real]):
+    def location_coordinates(self, value: Iterable[Real]) -> None:
         self._location_coordinates = IndexableProperty(value)
 
-    def copy(self, **kwargs):
+    def copy(self, **kwargs) -> Photon:
         new_obj = copy.deepcopy(self)
 
         # Check for kwarg overwrites
@@ -478,13 +486,13 @@ class Photon:
 
         return new_obj
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         out = ''
         for key, val in self.__dict__.items():
             out += f"{key.strip('_')}: {val}\n"
         return out
 
-    def simulate(self):
+    def simulate(self) -> None:
         assert self.system is not None, RuntimeError('Photon must be in an Optical System object to simulate.')
         if self.recursion_depth >= self.recursion_limit:
             if not self.throw_recursion_error:
@@ -505,11 +513,11 @@ class Photon:
             self.scatter()
 
     @property
-    def weight(self):
+    def weight(self) -> NDArray[Real]:
         return self._weight
 
     @weight.setter
-    def weight(self, weight: Union[Real, Iterable[Real]]):
+    def weight(self, weight: Union[Real, Iterable[Real]]) -> None:
         # If one weight is given, batch for all photons in batch
         if isinstance(weight, Real):
             weight *= np.ones(self.batch_size)
@@ -518,24 +526,25 @@ class Photon:
         if np.any(rr_check):
             self.russian_roulette(rr_check)
 
-    def russian_roulette(self, mask: NDArray[np.bool_]):
+    def russian_roulette(self, mask: NDArray[np.bool_]) -> None:
         survival = np.random.rand(np.count_nonzero(mask)) < (1 / self.russian_roulette_constant)
         self._weight[mask] = np.where(survival, self._weight[mask] * self.russian_roulette_constant, 0)
 
     @property
-    def medium(self):
+    def medium(self) -> NDArray[OpticalMedium]:
         self._medium = self.system.in_medium(self.location_coordinates)
-        if isinstance(self._medium, (list, tuple)):
-            self._medium = self.headed_into
+        tuple_mask = np.array([isinstance(medium, (tuple, list)) for medium in self._medium])
+        if np.any(tuple_mask):
+            self._medium[tuple_mask] = self.headed_into[tuple_mask]
         return self._medium
 
     @property
-    def is_terminated(self):
-        self._is_terminated = np.where((self.medium == self.system.surroundings) | (self.weight <= 0.0), True, False)
+    def is_terminated(self) -> np.bool_:
+        self._is_terminated = np.all((self.medium == self.system.surroundings) | (self.weight <= 0.0))
         return self._is_terminated
 
     @property
-    def headed_into(self):
+    def headed_into(self) -> NDArray[OpticalMedium]:
         bumped_coords = self.location_coordinates.copy()
         medium = np.array([None] * len(bumped_coords), dtype=object)  # Placeholder for batch results
 
@@ -559,72 +568,82 @@ class Photon:
 
         return medium
 
-    def move(self, step: Union[Real, Iterable[Real]] = None):
+    # TODO: Add support for fluorescence-based secondary photons
+    def absorb(self) -> None:
+        absorbed_weight = self.weight * np.array([medium.albedo_at(self.wavelength) for medium in self.medium])
+        self.A += absorbed_weight
+        self.weight = self.weight - absorbed_weight
+
+    def move(self, step: Union[Real, Iterable[Real]] = None) -> None:
         # Get current state
-        mu_t = self.medium.mu_t_at(self.wavelength)
+        mu_t = np.array([medium.mu_t_at(self.wavelength) for medium in self.medium])
         dir_cos = self.directional_cosines
         loc = self.location_coordinates
 
         # If scattering occurs, step is sampled from the distribution
         if step is None:
-            step = np.where(mu_t > 0, -np.log(np.random.rand(len(step_in))) / mu_t, float('inf'))
+            step = np.where(mu_t > 0, -np.log(np.random.rand(self.batch_size)) / mu_t, float('inf'))
+            step = np.where(self.weight > 0, step, 0)
         new_loc = loc + step[:, np.newaxis] * dir_cos
 
         # Determine which photons cross an interfaces
         interface, plane = self.system.interface_crossed(loc, new_loc)
-        crossed = (interface is not None) & (plane is not None)
-        interface_steps = np.where(crossed, (plane - loc[:, 2]) / dir_cos[:, 2], float('inf'))
+        crossed = (~np.isnan(plane)) if plane is not None else False
+        if np.any(crossed):
+            interface_steps = np.where(crossed, (plane - loc[:, 2]) / dir_cos[:, 2], float('inf'))
 
-        # Find photons that should move to the interfaces instead
-        move_to_interface = interface_steps < step
-        loc[move_to_interface] += interface_steps[move_to_interface, np.newaxis] * dir_cos[move_to_interface]
+            # Find photons that should move to the interfaces instead
+            move_to_interface = (interface_steps < step) & crossed
+            new_loc[move_to_interface] = loc[move_to_interface] + interface_steps[move_to_interface, np.newaxis] * \
+                                         dir_cos[move_to_interface]
 
-        # Reflect/refract photons at interfaces
-        if np.any(move_to_interface):
-            self.reflect_refract(interface, move_to_interface)
+            # Reflect/refract photons at interfaces
+            if np.any(move_to_interface):
+                self.reflect_refract(interface, move_to_interface)
+
+        # Update location
+        self.location_coordinates = new_loc
 
         # Update history for all photons
-        self.location_history.extend(zip(loc, self.weight))
+        self.location_history = np.append(self.location_history, new_loc[..., np.newaxis], axis=2)
+        self.weight_history = np.append(self.weight_history, self.weight[..., np.newaxis], axis=1)
 
         # Check if any photons exited
-        exit_mask = ~((self.system.boundaries[0] < loc[:, 2]) & (loc[:, 2] < self.system.boundaries[-1]))
+        exit_mask = self.headed_into == self.system.surroundings
 
         if np.any(exit_mask):
-            self.exit_location = np.where(
-                exit_mask[:, np.newaxis], self.location_history[-2][0], False
-            )
-            self.exit_weight = np.where(exit_mask, self.location_history[-2][1], False)
+            self.exit_location[exit_mask] = self.location_history[exit_mask, ..., -1]
+            self.exit_weight[exit_mask] = self.weight_history[exit_mask, -1]
 
             # Check if any exited photons hit a detector
-            detector_mask = exit_mask & (loc[:, 2] == self.system.detector_location)
+            detector_mask = exit_mask & (self.exit_location[:, 2] == self.system.detector_location)
             if np.any(detector_mask):
                 self.system.detector(self)
 
             # Handle reflection or transmission
-            reflected = loc[:, 2] < self.system.boundaries[0]
-            transmitted = loc[:, 2] > self.system.boundaries[-1]
-
-            self.R[reflected] += self.weight[reflected]
-            self.T[transmitted] += self.weight[transmitted]
+            self.R += np.where(exit_mask & (self.directional_cosines[:, 2] < 0), self.weight, 0)
+            self.T += np.where(exit_mask & (self.directional_cosines[:, 2] > 0), self.weight, 0)
 
             # Terminate exited photons
             self.weight[exit_mask] = 0
 
-    def reflect_refract(self, interfaces: Iterable[Tuple[OpticalMedium, OpticalMedium]], mask: NDArray[np.bool_]):
+    def reflect_refract(self,
+                        interfaces: Iterable[Tuple[OpticalMedium, OpticalMedium]],
+                        mask: NDArray[np.bool_]) -> None:
         # Get incidence state
         mu_x, mu_y, mu_z_i = self.directional_cosines[mask].T
         mu_z_t = np.zeros_like(mu_z_i)
-        n1 = interfaces[0].n[mask]
-        n2 = interfaces[1].n[mask]
+        n1 = np.array([interface[0].n if interface else np.nan for interface in interfaces])
+        n2 = np.array([interface[1].n if interface else np.nan for interface in interfaces])
 
         # Calculate refraction
-        sin_theta_t = n1 / n2 * np.sqrt(1 - mu_z_i ** 2)
+        sin_theta_t = n1[mask] / n2[mask] * np.sqrt(1 - mu_z_i ** 2)
 
         # TIR
         tir_mask = sin_theta_t > 1
         mu_z_t[tir_mask] = -mu_z_i[tir_mask]
         self.tir_count[mask] = np.where(tir_mask, self.tir_count[mask] + 1, self.tir_count[mask])
-        stop_tir = self.tir_count[mask] > self.tir_limit[mask]
+        stop_tir = self.tir_count[mask] > self.tir_limit
         self.A[mask] = np.where(stop_tir, self.A[mask] + self.weight[mask], self.A[mask])
         self.weight[mask] = np.where(stop_tir, 0, self.weight[mask])
 
@@ -633,18 +652,17 @@ class Photon:
         mu_z_t_masked = np.sqrt(1 - sin_theta_t[refract_mask] ** 2)
 
         # Extract only the masked refractive indices for masked values
-        n1_masked = n1[refract_mask]
-        n2_masked = n2[refract_mask]
+        n1_masked = n1[mask][refract_mask]
+        n2_masked = n2[mask][refract_mask]
         abs_mu_z_i = np.abs(mu_z_i[refract_mask])
-        mu_z_t_masked = mu_z_t_masked
 
         rs = np.abs(((n1_masked * abs_mu_z_i) - (n2_masked * mu_z_t_masked)) /
                     ((n1_masked * abs_mu_z_i) + (n2_masked * mu_z_t_masked))) ** 2
         rp = np.abs(((n2_masked * mu_z_t_masked) - (n1_masked * abs_mu_z_i)) /
                     ((n1_masked * abs_mu_z_i) + (n2_masked * mu_z_t_masked))) ** 2
-        specular_reflection = 0.5 * (rs + rp) * self.weight[refract_mask]
+        specular_reflection = 0.5 * (rs + rp) * self.weight[mask][refract_mask]
 
-        mu_z_t[refract_mask] *= np.sign(mu_z_i[refract_mask])  # Ensure correct sign
+        mu_z_t[refract_mask] = mu_z_t_masked * np.sign(mu_z_i[refract_mask])  # Ensure correct sign
 
         # If the reflected fraction will be reflected out, add it to reflected count, Else add it to transmitted
         reflected_out = mu_z_i[refract_mask] > 0
@@ -657,8 +675,8 @@ class Photon:
         self.T[mask] += T_temp
 
         # Updated for transmitted portion
-        mu_x[refract_mask] *= n1[refract_mask] / n2[refract_mask]
-        mu_y[refract_mask] *= n1[refract_mask] / n2[refract_mask]
+        mu_x[refract_mask] *= n1_masked / n2_masked
+        mu_y[refract_mask] *= n1_masked / n2_masked
 
         w_temp = self.weight[mask].copy()
         w_temp[refract_mask] -= specular_reflection
@@ -667,27 +685,29 @@ class Photon:
         # Send to setter for normalization
         self.directional_cosines[mask] = np.column_stack((mu_x, mu_y, mu_z_t))
 
-    # TODO: Add support for fluorescence-based secondary photons
-    def absorb(self):
-        absorbed_weight = self.weight * self.medium.albedo_at(self.wavelength)
-        self.A += absorbed_weight
-        self.weight = self.weight - absorbed_weight
-
-    def scatter(self, theta_phi=None):
+    def scatter(self, theta_phi: Optional[Union[Iterable[Real, Real], Iterable[Iterable[Real, Real]]]] = None):
+        # Placeholders for angle samples
+        theta = np.zeros(self.batch_size, dtype=np.float64)
+        cosine_theta = np.zeros_like(theta, dtype=np.float64)
         if theta_phi is None:
             # Sample random scattering angles from distribution
-            [xi, zeta] = np.random.rand(self.batch_size, 2)
-            if self.medium.g != 0.0:
-                lead_coeff = 1 / (2 * self.medium.g)
-                term_2 = self.medium.g ** 2
-                term_3 = (1 - term_2) / (1 - self.medium.g + (2 * self.medium.g * xi))
-                cosine_theta = lead_coeff * (1 + term_2 - term_3)
-            else:
-                cosine_theta = (2 * xi) - 1
+            [xi, zeta] = np.random.rand(self.batch_size, 2).T
+            g = np.array([medium.g for medium in self.medium])
+
+            # For non-zero g
+            non_zero_g_mask = g != 0
+            lead_coeff = 1 / (2 * g[non_zero_g_mask])
+            term_2 = g ** 2
+            term_3 = (1 - term_2) / (1 - g + (2 * g[non_zero_g_mask] * xi[non_zero_g_mask]))
+            cosine_theta[non_zero_g_mask] = lead_coeff * (1 + term_2 - term_3)
+
+            # For g=0
+            cosine_theta[~non_zero_g_mask] = (2 * xi[~non_zero_g_mask]) - 1
+
             theta = np.arccos(cosine_theta)
             phi = 2 * np.pi * zeta
         else:
-            theta, phi = theta_phi
+            theta, phi = theta_phi if isinstance(theta_phi, (tuple, list)) else zip(theta_phi)
 
         # Update direction cosines
         mu_x, mu_y, mu_z = self.directional_cosines.T
@@ -709,7 +729,8 @@ class Photon:
         new_directional_cosines[nonvertical, 0] = (np.sin(theta[nonvertical]) * (numr1 / deno)) + (
                 mu_x[nonvertical] * np.cos(theta[nonvertical]))
 
-        numr2 = (mu_y[nonvertical] * mu_z[nonvertical] * np.cos(phi)) + (mu_x[nonvertical] * np.sin(phi[nonvertical]))
+        numr2 = (mu_y[nonvertical] * mu_z[nonvertical] * np.cos(phi[nonvertical])) + (
+                    mu_x[nonvertical] * np.sin(phi[nonvertical]))
 
         new_directional_cosines[nonvertical, 1] = (np.sin(theta[nonvertical]) * (numr2 / deno)) + (
                 mu_y[nonvertical] * np.cos(theta[nonvertical]))
@@ -794,37 +815,37 @@ def sample_spectrum(wavelengths: Iterable[Real],
 class Illumination:
     def __init__(self,
                  pattern: Callable = ring_pattern((ID, OD), THETA),
-                 spectrum: Optional[Iterable] = None):
+                 spectrum: Optional[Iterable] = None) -> None:
         self.pattern = pattern
         self.spectrum = spectrum
 
-    def photon(self):
-        location, direciton = self.pattern()
+    def photon(self, n: int = 50000) -> Photon:
+        location, direciton = self.pattern(n)
         wavelength = sample_spectrum(self.spectrum) if self.spectrum else None
         return Photon(wavelength, location_coordinates=location, directional_cosines=direciton)
 
 
 class Detector:
-    def __init__(self, acceptor: Callable = cone_of_acceptance(ID)):
+    def __init__(self, acceptor: Callable = cone_of_acceptance(ID)) -> None:
         self.acceptor = acceptor
         self.n_total = 0
         self.n_detected = 0
 
     def detect(self, location: Iterable[Real],
                direction: Union[Real, Iterable[Real]],
-               weight: Optional[Union[Real, Iterable[Real]]] = None):
+               weight: Optional[Union[Real, Iterable[Real]]] = None) -> None:
         weight = weight if weight is not None else 1
-        self.n_total += weight
-        x, y = location[:2]
-        mu_z = direction[-1] if iterable(direction) else direction
-        if self.acceptor(x, y, mu_z=mu_z):
-            self.n_detected += weight
+        self.n_total += np.nansum(weight)
+        x, y = location[:, :2].T
+        mu_z = direction[:, -1]
+        accepted_mask = self.acceptor(x, y, mu_z=mu_z)
+        self.n_detected += np.sum(weight[accepted_mask])
 
-    def __call__(self, photon: Photon):
+    def __call__(self, photon: Photon) -> None:
         assert isinstance(photon, Photon), ValueError('Detector object can only be called directly with a photon. '
                                                       'Use detector.detect() for non-photon test cases.')
         self.detect(photon.exit_location, photon.exit_direction, photon.exit_weight)
 
-    def reset(self):
+    def reset(self) -> None:
         self.n_total = 0
         self.n_detected = 0

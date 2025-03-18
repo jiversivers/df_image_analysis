@@ -87,6 +87,7 @@ def ring_pattern(r_bounds: Union[Real, Tuple[Real, Real]],
 
     return sampler
 
+
 def cone_of_acceptance(r: Real,
                        na: Real = NA,
                        n: Real = 1.33) -> Callable:
@@ -106,4 +107,3 @@ def cone_of_acceptance(r: Real,
         return ~too_steep & ~outside
 
     return acceptor
-

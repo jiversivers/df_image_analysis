@@ -6,6 +6,7 @@ from numbers import Real
 from typing import Union, List, Optional, Iterable, Tuple, Callable
 
 from cupy.typing import NDArray
+from fontTools.feaLib import location
 from matplotlib import pyplot as plt, animation
 
 from my_modules.monte_carlo.hardware import ring_pattern, cone_of_acceptance, ID, OD, THETA
@@ -187,13 +188,13 @@ class System:
         border = ' ' + '_' * (space - 2) + ' '
         return border + stack + border
 
-    def beam(self, n=50000, **kwargs):
+    def beam(self, n: int = 50000, **kwargs):
         photon = self.illuminator.photon(n=n, system=self)
         for key, val in kwargs.items():
             setattr(photon, key, val)
         return photon
 
-    def in_medium(self, location):
+    def in_medium(self, location: Iterable[Real]):
         """
         Return the medium(s) that are at the queried coordinate. If the coordinate is an interfaces location, the mediums
         that makeup the interfaces are returned as a tuple, this includes boundary interfaces being returned with False
@@ -214,7 +215,7 @@ class System:
                      the coordinate is at an interfaces
         """
 
-        z = location[:, 2] if iterable(location[:]) else location[:]
+        z = np.asarray(location) if np.shape(location)[0] == 1 else np.asarray(location)[:, 2]
         in_medium = np.empty_like(z, dtype=object)
         in_medium = np.where(z == float('inf'), self.layer[0], in_medium)
         in_medium = np.where(z == float('-inf'), self.layer[-1], in_medium)
@@ -234,7 +235,9 @@ class System:
 
         return in_medium
 
-    def interface_crossed(self, location1, location2):
+    def interface_crossed(self,
+                          location0: Iterable[Real],
+                          location1: Iterable[Real]):
         """
         Determines the first interfaces crossed when moving between two locations, considering only the z-coordinates.
 
@@ -261,10 +264,8 @@ class System:
         """
 
         # Get z coords
-        z0 = np.asarray(location1)[:, 2] if np.ndim(location1) > 1 else np.array(
-            [location1[2] if iterable(location1) else location1])
-        z1 = np.asarray(location2)[:, 2] if np.ndim(location2) > 1 else np.array(
-            [location2[2] if iterable(location2) else location2])
+        z0 = np.asarray(location0) if np.shape(location0)[0] == 1 else np.asarray(location0)[:, 2]
+        z1 = np.asarray(location1) if np.shape(location1)[0] == 1 else np.asarray(location1)[:, 2]
 
         # Move off of boundaries (uncrossed!)
         is_boundary1 = np.isin(z0, self.boundaries)
@@ -300,7 +301,8 @@ class System:
 
         return interfaces, plane
 
-    def represent_on_axis(self, ax=None):
+    def represent_on_axis(self,
+                          ax: plt.axes.Axes = None):
         if ax is None:
             ax = plt.gca()
         lim = [
@@ -311,7 +313,6 @@ class System:
         if ax.name == '3d':
             ax.set(zlim=lim)
         else:
-            # ax.set(ylim=lim)
             alpha = 0.0
             for bound, medium in self.stack.items():
                 depth = np.diff(bound)
@@ -326,13 +327,15 @@ class System:
 
 
 class IndexableProperty(np.ndarray):
-    def __new__(cls, arr, normalize=False):
+    def __new__(cls,
+                arr: Iterable,
+                normalize: bool = False):
         obj = np.asarray(arr, dtype=np.float64).view(cls)
         obj.normalize = normalize
         obj /= np.linalg.norm(obj) if normalize else 1
         return obj
 
-    def __array_finalize__(self, obj):
+    def __array_finalize__(self, obj: Optional[NDArray]):
         if obj is None:
             return None
         self._normalize = getattr(obj, '_normalize', False)
@@ -342,12 +345,14 @@ class IndexableProperty(np.ndarray):
         return self._normalize
 
     @normalize.setter
-    def normalize(self, value):
+    def normalize(self, value: bool):
         self._normalize = value
         if self._normalize:
             self /= np.linalg.norm(self)
 
-    def __setitem__(self, index, value):
+    def __setitem__(self,
+                    index: int,
+                    value: Real):
         super().__setitem__(index, value)
         if self.normalize:
             self /= np.linalg.norm(self)

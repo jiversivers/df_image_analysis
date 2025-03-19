@@ -128,7 +128,7 @@ class TestPhoton(unittest.TestCase):
 class TestOpticalMedium(unittest.TestCase):
     def setUp(self):
         self.properties = {
-            'name': 'test',
+            'desc': 'test',
             'display_color': 'gray',
             'n': random() + 1,  # Random index of refraction in (1, 2)
             'mu_s': 100 * random() + 40,  # Random reduced scatter coeff in (40, 140)

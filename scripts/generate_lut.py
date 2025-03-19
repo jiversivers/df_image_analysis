@@ -1,7 +1,8 @@
 import itertools
 import sqlite3
 
-import my_modules.monte_carlo as mc
+from src import Medium, System, Detector, Illumination, hardware
+
 from tqdm import tqdm
 
 try:
@@ -19,83 +20,119 @@ print(f"Using {np.__name__}")
 
 def main():
     # Init parameter sets
-    mu_s_array = np.arange(0, 101, 5)
-    mu_a_array = np.arange(1, 102, 5)
+    mu_s_array = np.arange(0, 101, 1)
+    mu_a_array = np.arange(1, 102, 1)
     g_array = [0.9]
-    d_array = [float('inf')]  # Fix as semi-infinite
+    d_array = [0.1, float('inf')]
     n = 50000
     tissue_n = 1.33
     surroundings_n = 1
-    recurse = True
+    recurse = False
+    wl0 = 700
 
     # Make water medium
-    di_water = mc.OpticalMedium(n=1.33, mu_s=0, mu_a=0, g=0, name='di water')
-    glass = mc.OpticalMedium(n=1.523, mu_s=0, mu_a=0, g=0, name='glass')
+    di_water = Medium(n=1.33, mu_s=0, mu_a=0, g=0, desc='di water')
+    glass = Medium(n=1.523, mu_s=0, mu_a=0, g=0, desc='glass')
+
+    # Start the system
+    sampler = hardware.ring_pattern((hardware.ID, hardware.OD), hardware.THETA)
+    led = Illumination(pattern=sampler)
+    detector = Detector(hardware.cone_of_acceptance(hardware.ID), desc='darkfield inner cone')
+    system = System(di_water, 0.2,  # 1mm
+                    glass, 0.017,  # 0.17mm
+                    surrounding_n=surroundings_n,
+                    illuminator=led,
+                    detector=(detector, 0))
 
     # Simulate
-    conn = sqlite3.connect('databases/hsdfm_data.db')
+    conn = sqlite3.connect('data/databases/lut.db')
     c = conn.cursor()
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS mclut (
-        inner INTEGER PRIMARY KEY AUTOINCREMENT,
-        mu_s REAL,
-        mu_a REAL,
-        g REAL,
-        depth REAL,
-        transmission REAL,
-        reflectance REAL,
-        absorption REAL,
-        simulation_id INTEGER,
-        forced BOOLEAN DEFAULT FALSE
-    )""")
 
+    # Table of metadata
     c.execute("""
     CREATE TABLE IF NOT EXISTS mclut_simulations (
-    inner INTEGER PRIMARY KEY AUTOINCREMENT,
-    photon_count INTEGER NOT NULL,
-    dimensionality INTEGER NOT NULL,
-    water_n REAL NOT NULL,
-    water_mu_s REAL NOT NULL,
-    water_mu_a REAL NOT NULL,
-    tissue_n REAL NOT NULL,
-    surroundings_n REAL NOT NULL,
-    recursive BOOLEAN DEFAULT FALSE,
-    cover_glass BOOLEAN DEFAULT FALSE)""")
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photon_count INTEGER NOT NULL,
+        recursive BOOLEAN DEFAULT FALSE,
+        detector BOOLEAN DEFAULT FALSE,
+        detector_description TEXT DEFAULT ''
+        )
+        """)
 
+    # Table of detailed system data
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS fixed_layers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stack_order INTEGER NOT NULL,
+    layer TEXT NOT NULL,
+    mu_s REAL NOT NULL,
+    mu_a REAL NOT NULL,
+    g REAL NOT NULL,
+    thickness REAL NOT NULL,
+    ref_wavelength REAL NOT NULL,
+    simulation_id INTEGER NOT NULL,
+    FOREIGN KEY (simulation_id) REFERENCES mclut_simulations(id)
+    )
+    """)
+
+    # Table of results
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS mclut (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mu_s REAL NOT NULL,
+        mu_a REAL NOT NULL,
+        g REAL NOT NULL,
+        depth REAL NOT NULL,
+        reflectance REAL NOT NULL,
+        simulation_id INTEGER NOT NULL,
+        FOREIGN KEY (simulation_id) REFERENCES mclut_simulations(id)
+        )
+        """)
+
+    # Insert simulation metadata
     c.execute(f"""
     INSERT INTO mclut_simulations (
-    photon_count, dimensionality, water_n, water_mu_s, water_mu_a, tissue_n, surroundings_n, recursive, cover_glass
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
-        n, 1, float(di_water.n), float(di_water.mu_s), float(di_water.mu_a), float(tissue_n), float(surroundings_n),
-        recurse, True if 'glass' in locals() else False
+    photon_count, recursive, detector, detector_description
+    ) VALUES (?, ?, ?, ?)""", (
+        n, recurse, detector is not None, detector.desc if detector is not None else ''
     ))
     conn.commit()
     simulation_id = c.lastrowid
 
-    # Set the total number of iterations for each loop level
-    for (mu_s, mu_a, g, d) in tqdm(itertools.product(mu_s_array, mu_a_array, g_array, d_array), desc="Processing",
-                                   total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array)):
+    # Add fixed layer details to table
+    fixed_layers = []
+    for i, (bound, layer) in enumerate(system.stack.items()):
+        fixed_layers.append((
+            i, layer.desc, layer.mu_s_at(wl0), layer.mu_a_at(wl0), layer.g, bound[1] - bound[0], wl0, simulation_id
+        ))
+    c.executemany(f"""
+    INSERT INTO fixed_layers (
+        stack_order, layer, mu_s, mu_a, g, thickness, ref_wavelength, simulation_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", fixed_layers)
+
+    # Iterate through input params
+    for (mu_s, mu_a, g, d) in (pbar := tqdm(itertools.product(mu_s_array, mu_a_array, g_array, d_array),
+                                            total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array))):
+        pbar.set_description(f'mu_s={mu_s}, mu_a={mu_a}, g={g}, depth={d}...')
         # Make the system
-        tissue = mc.OpticalMedium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, name='tissue')
-        system = mc.System(di_water, 0.1,  # 1mm
-                           glass, 0.017,  # 0.17mm
-                           tissue, d,
-                           surrounding_n=surroundings_n)
+        tissue = Medium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, desc='tissue')
+        system = System(di_water, 0.1,  # 1mm
+                        glass, 0.017,  # 0.17mm
+                        tissue, d,
+                        surrounding_n=surroundings_n)
         T, R, A = 3 * [0]
 
-        for i in range(n):
-            photon = mc.Photon(650, system=system, recurse=recurse)
-            photon.simulate()
-            T += photon.T
-            R += photon.R
-            A += photon.A
+        detector.reset()
+        photon = system.beam(n=n, recurse=recurse, tir_limit=100, russian_roulette_constant=20)
+        photon.simulate()
+        detected_R = detector.n_detected / (n - (photon.R - detector.n_detected))
 
         # Add results to db
         c.execute(f"""
                     INSERT INTO mclut (
-                    mu_s, mu_a, g, depth, transmission, reflectance, absorption, simulation_id, forced
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, false)""", (
-            float(mu_s), float(mu_a), float(g), float(d), float(T / n), float(R / n), float(A / n), simulation_id
+                    mu_s, mu_a, g, depth, reflectance, simulation_id
+                    ) VALUES (?, ?, ?, ?, ?, ?)""", (
+            float(mu_s), float(mu_a), float(g), float(d), float(detected_R), simulation_id
         ))
     conn.commit()
 

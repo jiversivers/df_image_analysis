@@ -91,6 +91,18 @@ class OpticalMedium:
         else:
             return self.mu_a / self.mu_t
 
+    @property
+    def g(self):
+        return self._g
+
+    @g.setter
+    def g(self, g):
+        if np.any(self.mu_s == 0 and g != 1):
+            warnings.warn('g is automatically set to 1 where mu_s is 0. '
+                          'Set a non-zero scattering coefficient if a non-unity g value is necessary.')
+            self._g = np.where(self.mu_s == 0, 1, g)
+        self._g = g
+
 
 class System:
     def __init__(self, *args,
@@ -599,8 +611,8 @@ class Photon:
 
             # Find photons that should move to the interfaces instead
             move_to_interface = (interface_steps < step) & crossed
-            new_loc[move_to_interface] = loc[move_to_interface] + interface_steps[move_to_interface, np.newaxis] * \
-                                         dir_cos[move_to_interface]
+            new_loc[move_to_interface] = (loc[move_to_interface] + interface_steps[move_to_interface, np.newaxis]
+                                          * dir_cos[move_to_interface])
 
             # Reflect/refract photons at interfaces
             if np.any(move_to_interface):
@@ -640,13 +652,13 @@ class Photon:
         mu_z_t = np.zeros_like(mu_z_i)
         n1 = np.array(
             [interface[0].n if iterable(interface) and len(interface) == 2 else np.nan for interface in
-             interfaces])
+             interfaces])[mask]
         n2 = np.array(
             [interface[1].n if iterable(interface) and len(interface) == 2 else np.nan for interface in
-             interfaces])
+             interfaces])[mask]
 
         # Calculate refraction
-        sin_theta_t = n1[mask] / n2[mask] * np.sqrt(1 - mu_z_i ** 2)
+        sin_theta_t = n1 / n2 * np.sqrt(1 - (mu_z_i ** 2))
 
         # TIR
         tir_mask = sin_theta_t > 1
@@ -658,11 +670,11 @@ class Photon:
 
         # Snell's + Fresnel's Law
         refract_mask = ~tir_mask
-        mu_z_t_masked = np.sqrt(1 - sin_theta_t[refract_mask] ** 2)
+        mu_z_t_masked = np.sqrt(1 - (sin_theta_t[refract_mask] ** 2))
 
         # Extract only the masked refractive indices for masked values
-        n1_masked = n1[mask][refract_mask]
-        n2_masked = n2[mask][refract_mask]
+        n1_masked = n1[refract_mask]
+        n2_masked = n2[refract_mask]
         abs_mu_z_i = np.abs(mu_z_i[refract_mask])
 
         rs = np.abs(((n1_masked * abs_mu_z_i) - (n2_masked * mu_z_t_masked)) /
@@ -673,24 +685,34 @@ class Photon:
 
         mu_z_t[refract_mask] = mu_z_t_masked * np.sign(mu_z_i[refract_mask])  # Ensure correct sign
 
-        # If the reflected fraction will be reflected out, add it to reflected count, Else add it to transmitted
-        reflected_out = mu_z_i[refract_mask] > 0
-        transmitted_out = mu_z_i[refract_mask] < 0
-        self.R += np.sum(specular_reflection * reflected_out)
-        self.T += np.sum(specular_reflection * transmitted_out)
-
         # Updated for transmitted portion
         mu_x[refract_mask] *= n1_masked / n2_masked
         mu_y[refract_mask] *= n1_masked / n2_masked
 
-        w_temp = self.weight[mask].copy()
-        w_temp[refract_mask] -= specular_reflection
-        self.weight[mask] = w_temp
+        if self.recurse:
+            pass
+        else:
+            # If the reflected fraction will be reflected out, add it to reflected count, Else add it to transmitted
+            reflected_out = mu_z_i[refract_mask] > 0
+            transmitted_out = mu_z_i[refract_mask] < 0
+            self.R += np.sum(specular_reflection * reflected_out)
+            self.T += np.sum(specular_reflection * transmitted_out)
+
+            w_temp = self.weight[mask].copy()
+            w_temp[refract_mask] -= specular_reflection
+            self.weight[mask] = w_temp
 
         # Send to setter for normalization
         self.directional_cosines[mask] = np.column_stack((mu_x, mu_y, mu_z_t))
 
     def scatter(self, theta_phi: Optional[Union[Iterable[Real, Real], Iterable[Iterable[Real, Real]]]] = None):
+        # Ignore photons at interfaces
+        at_interface = np.array([iterable(interface) for interface in self.system.in_medium(self.location_coordinates)])
+
+        # Early break if all are at an interface
+        if np.all(at_interface):
+            return
+
         # Placeholders for angle samples
         theta = np.zeros(self.batch_size, dtype=np.float64)
         cosine_theta = np.zeros_like(theta, dtype=np.float64)
@@ -746,7 +768,7 @@ class Photon:
                 mu_z[nonvertical] * np.cos(theta[nonvertical]))
 
         # Update directional cosines with new direciton (done at once for normalization consistency)
-        self.directional_cosines = new_directional_cosines
+        self.directional_cosines[~at_interface] = new_directional_cosines[~at_interface]
 
     def plot_path(self, project_onto=None, axes=None, ignore_outside=True):
         project_onto = ['xz', 'yz', 'xy'] if project_onto == 'all' else project_onto
@@ -755,16 +777,18 @@ class Photon:
 
         # Boundaries for filtering
         z_min, z_max = self.system.boundaries[0], self.system.boundaries[-1]
+        inside = ((self.location_history[:, 2] >= z_min)
+                  & (self.location_history[:, 2] <= z_max)) if ignore_outside else True
 
         fig = plt.figure(figsize=(8 * len(project_onto), 8)) if not plt.get_fignums() else plt.gcf()
         if project_onto[0]:
             axes = [fig.add_subplot(1, len(project_onto), i + 1) for i in
                     range(len(project_onto))] if axes is None else axes
             for ax, projection in zip(axes, project_onto):
-                for i in range(batch_size):  # Iterate over photons
+                for i in range(batch_size):
                     x, y = self.location_history[i, 'xyz'.index(projection[0])], self.location_history[
                         i, 'xyz'.index(projection[1])]
-                    ax.plot(x, y, label=f'Photon {i + 1}')
+                    ax.plot(x[inside[i]], y[inside[i]], label=f'Photon {i + 1}')
                 ax.set_title(f'Projected onto {projection}-plane')
                 ax.set_xlabel(f'Photon Displacement in {projection[0]}-direction (cm)')
                 ax.set_ylabel(f'Photon Displacement in {projection[1]}-direction (cm)')
@@ -775,8 +799,8 @@ class Photon:
         else:
             axes = fig.add_subplot(projection='3d') if axes is None else axes
             for i in range(batch_size):
-                axes.plot(self.location_history[i, 0], self.location_history[i, 1], self.location_history[i, 2],
-                          label=f'Photon {i + 1}')
+                x, y, z = self.location_history[i, 0], self.location_history[i, 1], self.location_history[i, 2]
+                axes.plot(x[inside[i]], y[inside[i]], z[inside[i]], label=f'Photon {i + 1}')
             axes.set_title('Photon Paths')
             axes.set_xlabel('Photon Displacement in x-direction (cm)')
             axes.set_ylabel('Photon Displacement in y-direction (cm)')
@@ -785,22 +809,6 @@ class Photon:
                 axes.invert_zaxis()
 
         return fig, axes
-
-    def animate_path(self, ax=None, filename=None):
-        filename = 'animation.gif' if filename is None else filename
-
-        def update_lines(num, paths, lines):
-            for line, path in zip(lines, paths):
-                line.set_data_3d(path[:num])
-            return lines
-
-        fig = plt.figure() if not plt.get_fignums() else plt.gcf()
-        ax = fig.add_subplot(projection='3d') if ax is None else ax
-        lines = [ax.plot([], [], [])[0] for _ in self.location_history]
-        ani = animation.FuncAnimation(
-            fig, update_lines, len(self.location_history), fargs=(self.location_history, lines), interval=100
-        )
-        ani.save(filename)
 
 
 def sample_spectrum(wavelengths: Iterable[Real],

@@ -220,19 +220,24 @@ class System:
         in_medium = np.where(z == float('-inf'), self.surroundings, in_medium)
 
         for bound, medium in self.stack.items():
+            # IF between boundaries, get that medium
             mask_inside = np.logical_and(bound[0] < z, z < bound[1])
             mask_boundary = (bound[0] == z)
 
             in_medium[mask_inside] = medium
 
+            # If at a boundary, get the mediums on each side
             if np.any(mask_boundary):
                 z_neg_move = np.nextafter(z[mask_boundary], float('-inf'))
                 z_pos_move = np.nextafter(z[mask_boundary], float('inf'))
                 output1 = self.in_medium(z_neg_move)
                 output2 = self.in_medium(z_pos_move)
-                for idx in np.where(mask_boundary)[0]:
-                    in_medium[idx] = (output1, output2)
+                for i, idx in enumerate(np.where(mask_boundary)[0]):
+                    in_medium[idx] = (output1[i], output2[i])
 
+            # If all have been filled in, break
+            if not np.any(np.equal(in_medium, None)):
+                break
         return in_medium
 
     def interface_crossed(self,
@@ -401,8 +406,8 @@ class Photon:
             directional_cosines = np.repeat(directional_cosines[np.newaxis, ...], n, axis=0)
         else:
             assert np.shape(directional_cosines)[0] == n and np.shape(directional_cosines)[1] == 3, ValueError(
-                'Directional cosine input is incompatible with batch size. Input bust be shape (3,) or (n, 3) where n '
-                'is the photon batch size.'
+                f'Directional cosine input is incompatible with batch size. Input bust be shape (3,) or ({n}, 3) but '
+                f'the input is {np.shape(directional_cosines)}'
             )
         self.directional_cosines = directional_cosines
 
@@ -411,8 +416,8 @@ class Photon:
             location_coordinates = np.repeat(location_coordinates[np.newaxis, ...], n, axis=0)
         else:
             assert np.shape(location_coordinates)[0] == n and np.shape(location_coordinates)[1] == 3, ValueError(
-                'Location coordinate input is incompatible with batch size. Input bust be shape (3,) or (n, 3) where n '
-                'is the photon batch size.'
+                f'Directional cosine input is incompatible with batch size. Input bust be shape (3,) or ({n}, 3) but '
+                f'the input is {np.shape(location_coordinates)}'
             )
         self.location_coordinates = location_coordinates
 
@@ -421,8 +426,8 @@ class Photon:
             weight = np.repeat(weight[np.newaxis, ...], n, axis=0)
         else:
             assert np.shape(weight)[0] == n and np.shape(weight)[1] == 1, ValueError(
-                'Weight input is incompatible with batch size. Input bust be shape (1,) or (n, 1) where n '
-                'is the photon batch size.'
+                f'Directional cosine input is incompatible with batch size. Input bust be shape (1,) or ({n}, 1) but '
+                f'the input is {np.shape(weight)}'
             )
         self._weight = weight
 
@@ -608,8 +613,8 @@ class Photon:
         self.location_history = np.append(self.location_history, new_loc[..., np.newaxis], axis=2)
         self.weight_history = np.append(self.weight_history, self.weight[..., np.newaxis], axis=1)
 
-        # Check if any photons exited
-        exit_mask = self.headed_into == self.system.surroundings
+        # Check if any new photons exited
+        exit_mask = (self.headed_into == self.system.surroundings) & (self.weight > 0)
 
         if np.any(exit_mask):
             self.exit_location[exit_mask] = self.location_history[exit_mask, ..., -1]
@@ -618,7 +623,7 @@ class Photon:
             # Check if any exited photons hit a detector
             detector_mask = exit_mask & (self.exit_location[:, 2] == self.system.detector_location)
             if np.any(detector_mask):
-                self.system.detector(self)
+                self.system.detector(self, exit_mask)
 
             # Handle reflection or transmission
             self.R += np.sum(np.where(exit_mask & (self.directional_cosines[:, 2] < 0), self.weight, 0))
@@ -633,8 +638,12 @@ class Photon:
         # Get incidence state
         mu_x, mu_y, mu_z_i = self.directional_cosines[mask].T
         mu_z_t = np.zeros_like(mu_z_i)
-        n1 = np.array([interface[0].n if interface else np.nan for interface in interfaces])
-        n2 = np.array([interface[1].n if interface else np.nan for interface in interfaces])
+        n1 = np.array(
+            [interface[0].n if iterable(interface) and len(interface) == 2 else np.nan for interface in
+             interfaces])
+        n2 = np.array(
+            [interface[1].n if iterable(interface) and len(interface) == 2 else np.nan for interface in
+             interfaces])
 
         # Calculate refraction
         sin_theta_t = n1[mask] / n2[mask] * np.sqrt(1 - mu_z_i ** 2)
@@ -747,18 +756,13 @@ class Photon:
         # Boundaries for filtering
         z_min, z_max = self.system.boundaries[0], self.system.boundaries[-1]
 
-        # Ignore photons outside z-boundaries (vectorized masking)
-        if ignore_outside:
-            valid = (self.location_history[:, :, 2] >= z_min) & (self.location_history[:, :, 2] <= z_max)
-            location_history = np.where(valid[..., None], self.location_history, np.nan)  # Mask out invalid positions
-
         fig = plt.figure(figsize=(8 * len(project_onto), 8)) if not plt.get_fignums() else plt.gcf()
         if project_onto[0]:
             axes = [fig.add_subplot(1, len(project_onto), i + 1) for i in
                     range(len(project_onto))] if axes is None else axes
             for ax, projection in zip(axes, project_onto):
                 for i in range(batch_size):  # Iterate over photons
-                    x, y = location_history[i, 'xyz'.index(projection[0])], location_history[
+                    x, y = self.location_history[i, 'xyz'.index(projection[0])], self.location_history[
                         i, 'xyz'.index(projection[1])]
                     ax.plot(x, y, label=f'Photon {i + 1}')
                 ax.set_title(f'Projected onto {projection}-plane')
@@ -771,7 +775,7 @@ class Photon:
         else:
             axes = fig.add_subplot(projection='3d') if axes is None else axes
             for i in range(batch_size):
-                axes.plot(location_history[i, 0], location_history[i, 1], location_history[i, 2],
+                axes.plot(self.location_history[i, 0], self.location_history[i, 1], self.location_history[i, 2],
                           label=f'Photon {i + 1}')
             axes.set_title('Photon Paths')
             axes.set_xlabel('Photon Displacement in x-direction (cm)')
@@ -824,10 +828,10 @@ class Illumination:
         self.pattern = pattern
         self.spectrum = spectrum
 
-    def photon(self, n: int = 50000) -> Photon:
-        location, direciton = self.pattern(n)
+    def photon(self, n: int = 50000, **kwargs) -> Photon:
+        location, direction = self.pattern(n)
         wavelength = sample_spectrum(self.spectrum) if self.spectrum else None
-        return Photon(wavelength, location_coordinates=location, directional_cosines=direciton)
+        return Photon(wavelength, n=n, location_coordinates=location, directional_cosines=direction, **kwargs)
 
 
 class Detector:
@@ -844,12 +848,14 @@ class Detector:
         x, y = location[:, :2].T
         mu_z = direction[:, -1]
         accepted_mask = self.acceptor(x, y, mu_z=mu_z)
-        self.n_detected += np.sum(weight[accepted_mask])
+        self.n_detected += np.nansum(weight[accepted_mask])
 
-    def __call__(self, photon: Photon) -> None:
+    def __call__(self,
+                 photon: Photon,
+                 mask: Optional[NDArray[np.bool_]] = True) -> None:
         assert isinstance(photon, Photon), ValueError('Detector object can only be called directly with a photon. '
                                                       'Use detector.detect() for non-photon test cases.')
-        self.detect(photon.exit_location, photon.exit_direction, photon.exit_weight)
+        self.detect(photon.exit_location[mask], photon.exit_direction[mask], photon.exit_weight[mask])
 
     def reset(self) -> None:
         self.n_total = 0

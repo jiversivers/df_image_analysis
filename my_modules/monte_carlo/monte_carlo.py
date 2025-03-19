@@ -444,9 +444,9 @@ class Photon:
         self.weight_history = self.weight[..., np.newaxis].copy()
         self.recursed_photons = np.zeros(n, dtype=int)
         self.tir_count = np.zeros(n, dtype=int)
-        self.A = np.zeros(n, dtype=np.float64)
-        self.T = np.zeros(n, dtype=np.float64)
-        self.R = np.zeros(n, dtype=np.float64)
+        self.A = 0.
+        self.T = 0.
+        self.R = 0.
 
     # EXPLANATION OF INDEXABLE_PROPERTIES
     # When one of these properties, obj, is used in the form obj = value, it will call the setter, which sets the
@@ -571,7 +571,7 @@ class Photon:
     # TODO: Add support for fluorescence-based secondary photons
     def absorb(self) -> None:
         absorbed_weight = self.weight * np.array([medium.albedo_at(self.wavelength) for medium in self.medium])
-        self.A += absorbed_weight
+        self.A += np.sum(absorbed_weight)
         self.weight = self.weight - absorbed_weight
 
     def move(self, step: Union[Real, Iterable[Real]] = None) -> None:
@@ -621,8 +621,8 @@ class Photon:
                 self.system.detector(self)
 
             # Handle reflection or transmission
-            self.R += np.where(exit_mask & (self.directional_cosines[:, 2] < 0), self.weight, 0)
-            self.T += np.where(exit_mask & (self.directional_cosines[:, 2] > 0), self.weight, 0)
+            self.R += np.sum(np.where(exit_mask & (self.directional_cosines[:, 2] < 0), self.weight, 0))
+            self.T += np.sum(np.where(exit_mask & (self.directional_cosines[:, 2] > 0), self.weight, 0))
 
             # Terminate exited photons
             self.weight[exit_mask] = 0
@@ -644,7 +644,7 @@ class Photon:
         mu_z_t[tir_mask] = -mu_z_i[tir_mask]
         self.tir_count[mask] = np.where(tir_mask, self.tir_count[mask] + 1, self.tir_count[mask])
         stop_tir = self.tir_count[mask] > self.tir_limit
-        self.A[mask] = np.where(stop_tir, self.A[mask] + self.weight[mask], self.A[mask])
+        self.A += np.sum(np.where(stop_tir, self.weight[mask], 0))
         self.weight[mask] = np.where(stop_tir, 0, self.weight[mask])
 
         # Snell's + Fresnel's Law
@@ -667,12 +667,8 @@ class Photon:
         # If the reflected fraction will be reflected out, add it to reflected count, Else add it to transmitted
         reflected_out = mu_z_i[refract_mask] > 0
         transmitted_out = mu_z_i[refract_mask] < 0
-        R_temp = self.R[mask].copy()
-        R_temp[refract_mask] += specular_reflection * reflected_out
-        self.R[mask] = R_temp
-        T_temp = self.T[mask].copy()
-        T_temp[refract_mask] += specular_reflection * transmitted_out
-        self.T[mask] += T_temp
+        self.R += np.sum(specular_reflection * reflected_out)
+        self.T += np.sum(specular_reflection * transmitted_out)
 
         # Updated for transmitted portion
         mu_x[refract_mask] *= n1_masked / n2_masked
@@ -697,8 +693,8 @@ class Photon:
             # For non-zero g
             non_zero_g_mask = g != 0
             lead_coeff = 1 / (2 * g[non_zero_g_mask])
-            term_2 = g ** 2
-            term_3 = (1 - term_2) / (1 - g + (2 * g[non_zero_g_mask] * xi[non_zero_g_mask]))
+            term_2 = g[non_zero_g_mask] ** 2
+            term_3 = (1 - term_2) / (1 - g[non_zero_g_mask] + (2 * g[non_zero_g_mask] * xi[non_zero_g_mask]))
             cosine_theta[non_zero_g_mask] = lead_coeff * (1 + term_2 - term_3)
 
             # For g=0
@@ -746,37 +742,36 @@ class Photon:
     def plot_path(self, project_onto=None, axes=None, ignore_outside=True):
         project_onto = ['xz', 'yz', 'xy'] if project_onto == 'all' else project_onto
         project_onto = [project_onto] if isinstance(project_onto, str) or project_onto is None else project_onto
-
-        location_history = np.array(self.location_history)  # Convert to NumPy array for vectorized operations
-        batch_size, time_steps, _ = location_history.shape  # Expect shape (batch, time, 3)
+        batch_size, _, steps = self.location_history.shape  # Expect shape (batch, 3, steps)
 
         # Boundaries for filtering
         z_min, z_max = self.system.boundaries[0], self.system.boundaries[-1]
 
         # Ignore photons outside z-boundaries (vectorized masking)
         if ignore_outside:
-            valid = (location_history[:, :, 2] >= z_min) & (location_history[:, :, 2] <= z_max)
-            location_history = np.where(valid[..., None], location_history, np.nan)  # Mask out invalid positions
+            valid = (self.location_history[:, :, 2] >= z_min) & (self.location_history[:, :, 2] <= z_max)
+            location_history = np.where(valid[..., None], self.location_history, np.nan)  # Mask out invalid positions
 
         fig = plt.figure(figsize=(8 * len(project_onto), 8)) if not plt.get_fignums() else plt.gcf()
-
         if project_onto[0]:
             axes = [fig.add_subplot(1, len(project_onto), i + 1) for i in
                     range(len(project_onto))] if axes is None else axes
             for ax, projection in zip(axes, project_onto):
                 for i in range(batch_size):  # Iterate over photons
-                    x, y = location_history[i, :, 'xyz'.index(projection[0])], location_history[i, :,
-                                                                               'xyz'.index(projection[1])]
+                    x, y = location_history[i, 'xyz'.index(projection[0])], location_history[
+                        i, 'xyz'.index(projection[1])]
                     ax.plot(x, y, label=f'Photon {i + 1}')
                 ax.set_title(f'Projected onto {projection}-plane')
                 ax.set_xlabel(f'Photon Displacement in {projection[0]}-direction (cm)')
                 ax.set_ylabel(f'Photon Displacement in {projection[1]}-direction (cm)')
                 if projection[1] == 'z' and not ax.yaxis_inverted():
                     ax.invert_yaxis()
+                if projection[0] == 'z' and not ax.xaxis_inverted():
+                    ax.invert_xaxis()
         else:
             axes = fig.add_subplot(projection='3d') if axes is None else axes
             for i in range(batch_size):
-                axes.plot(location_history[i, :, 0], location_history[i, :, 1], location_history[i, :, 2],
+                axes.plot(location_history[i, 0], location_history[i, 1], location_history[i, 2],
                           label=f'Photon {i + 1}')
             axes.set_title('Photon Paths')
             axes.set_xlabel('Photon Displacement in x-direction (cm)')

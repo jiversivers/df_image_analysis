@@ -23,7 +23,7 @@ def main():
     mu_s_array = np.arange(0, 101, 1)
     mu_a_array = np.arange(1, 102, 1)
     g_array = [0.9]
-    d_array = [0.1, float('inf')]
+    d = float('inf')
     n = 50000
     tissue_n = 1.33
     surroundings_n = 1
@@ -111,18 +111,20 @@ def main():
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", fixed_layers)
 
     # Iterate through input params
-    for (mu_s, mu_a, g, d) in (pbar := tqdm(itertools.product(mu_s_array, mu_a_array, g_array, d_array),
-                                            total=len(mu_s_array) * len(mu_a_array) * len(g_array) * len(d_array))):
-        pbar.set_description(f'mu_s={mu_s}, mu_a={mu_a}, g={g}, depth={d}...')
-        # Make the system
-        tissue = Medium(n=tissue_n, mu_s=mu_s, mu_a=mu_a, g=g, desc='tissue')
-        system = System(di_water, 0.1,  # 1mm
-                        glass, 0.017,  # 0.17mm
-                        tissue, d,
-                        surrounding_n=surroundings_n)
-        T, R, A = 3 * [0]
+    tissue = Medium(n=tissue_n, mu_s=0, mu_a=0, g=1, desc='tissue')  # Placeholder to update at iteration
+    system.add(tissue, d)
+    detected_R = None
+    for (mu_s, mu_a, g) in (pbar := tqdm(itertools.product(mu_s_array, mu_a_array, g_array),
+                                         total=len(mu_s_array) * len(mu_a_array) * len(g_array))):
+        pbar.set_description(
+            f'{'' if detected_R is None else f'Prev. R: {detected_R} |'} '
+            f'Current params: mu_s={mu_s}, mu_a={mu_a}, g={g}...')
 
+        # Update the system
+        tissue.set(mu_s=mu_s, mu_a=mu_a, g=g)
+        # Reset counter
         detector.reset()
+
         photon = system.beam(n=n, recurse=recurse, tir_limit=100, russian_roulette_constant=20)
         photon.simulate()
         detected_R = detector.n_detected / (n - (photon.R - detector.n_detected))

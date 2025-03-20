@@ -6,7 +6,7 @@ import pandas as pd
 import sqlite3
 
 import numpy as np
-from cupy.typing import NDArray
+from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator
 
 # Setup default database and MCLUT version

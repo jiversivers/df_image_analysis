@@ -238,7 +238,8 @@ class System:
         return border + stack + border
 
     def add(self, layer: Medium, depth: Real) -> None:
-        assert self.layer[-1] == self.surroundings or self.boundaries[-1] != float('inf'), OverflowError('Cannot add to semi-infinite system.')
+        assert self.layer[-1] == self.surroundings or self.boundaries[-1] != float('inf'), OverflowError(
+            'Cannot add to semi-infinite system.')
         depth = float(depth)
         # Get the bound of the last layer before surroundings
         for bound, medium in self.stack.items():
@@ -439,20 +440,107 @@ class IndexableProperty(np.ndarray):
 
 
 class Photon:
+    class Photon:
+        """
+        Represents a photon or a batch of photons with properties and behaviors that simulate photon interactions
+        with a medium, including movement, absorption, scattering, and more.
+
+        This class simulates the behavior of photons in an optical system, including their movement through
+        different mediums, interactions with interfaces, and absorption or scattering events. The photons are
+        modeled as a batch, and each photon has attributes such as wavelength, directional cosines, location,
+        and weight, which can be modified and tracked throughout the simulation.
+
+        Attributes:
+        - batch_size (int): The number of photons in the batch.
+        - wavelength (Union[Real, Iterable[Real]]): The wavelength(s) of the photon(s).
+        - system (Optional[System]): The system that contains the photon batch.
+        - directional_cosines (IndexableProperty[Real]): The directional cosines for each photon in the batch.
+        - location_coordinates (np.ndarray): The coordinates of the location of each photon in the batch.
+        - weight (np.ndarray): The weight of each photon in the batch.
+        - russian_roulette_constant (Real): The constant used for photon survival in the Russian roulette process.
+        - recurse (bool): Whether recursion is allowed in the simulation.
+        - recursion_depth (int): The current depth of recursion in the simulation.
+        - recursion_limit (Real): The limit for recursion depth in the simulation.
+        - throw_recursion_error (bool): Whether to throw an error when recursion limit is exceeded (alt. warn and break).
+        - keep_secondary_photons (bool): Whether to retain secondary (recursed) photons in the simulation.
+        - tir_limit (Real): The limit for total internal reflection (TIR).
+        - A (Real): The amount of the batch that has been absorbed.
+        - R (Real): The amount of the batch that has been reflected (out of the system).
+        - T (Real): The amount of the batch that has been transmitted (out of the system).
+        - exit_location (np.ndarray[Real]): The coordinates of the photon at the end of the simulation.
+        - exit_direciton (np.ndarray[Real]): The direction of the photon at the end of the simulation.
+        - exit_weights (np.ndarray[Real]): The weights of the photon at the end of the simulation.
+        - location_history (np.ndarray[Real]): The location history of the photon at all steps in the batch simulation.
+        - weight_history (np.ndarray[Real]): The weight history of the photon at all steps in the batch simulation.
+
+
+        Methods:
+        - __init__: Constructor for the photon that handles implicit batching necessities.
+        - simulate: Runs the photon simulation until all photons are terminated.
+        - absorb: Decrements each photon's weight based on current medium's albedo.
+        - move: Moves the photons one step, handling interface crossing internally.
+        - reflect_refract: Deterministically updates the direciton of photons based on interface properties.
+        - scatter: Randomly updates the direction of each photon based on the scattering properties of the medium.
+        - copy: Creates a deep copy of the photon object, with optional attribute overwrites.
+        - russian_roulette: Simulates photon survival using the Russian roulette method.
+        - __repr__: Provides a string representation of the photon object for debugging.
+        """
 
     def __init__(self, wavelength: Union[Real, Iterable[Real]],
                  n: int = 0,
-                 system: System = None,
+                 system: Optional[System] = None,
                  directional_cosines: Iterable[Real] = (0, 0, 1),
                  location_coordinates: Iterable[Real] = (0, 0, 0),
                  weight: Union[Real, Iterable[Real]] = 1,
                  russian_roulette_constant: Real = 20,
                  recurse: bool = True,
-                 recursion_depth: int = 0,
-                 recursion_limit: Real = 100,
+                 recursion_depth: Optional[int] = 0,
+                 recursion_limit: Optional[Real] = 100,
                  throw_recursion_error: bool = True,
                  keep_secondary_photons: bool = False,
-                 tir_limit: Real = float('inf')) -> None:
+                 tir_limit: Optional[Real] = float('inf')) -> None:
+        """
+           Initializes a photon batch with specified attributes and sets up trackers for simulation.
+
+           The constructor ensures that directional cosines, location coordinates, and weight are appropriately sized
+           to match the batch size (`n`). If only one set is provided, it will be repeated to fill the batch.
+           If multiple sets are provided, they must match the batch size.
+
+           Parameters:
+           :param wavelength: A single wavelength or an iterable of wavelengths for the photon batch.
+           :type wavelength: Union[Real, Iterable[Real]]
+           :param n: The number of photons in the batch. Defaults to 0.
+           :type n: int, optional
+           :param system: The system containing the photon batch. Defaults to None.
+           :type system: Optional[System], optional
+           :param directional_cosines: The directional cosines of the photon batch. Can be a single set or an iterable
+               matching the batch size. Defaults to (0, 0, 1).
+           :type directional_cosines: Iterable[Real], optional
+           :param location_coordinates: The location coordinates of the photon batch. Can be a single set or an iterable
+               matching the batch size. Defaults to (0, 0, 0).
+           :type location_coordinates: Iterable[Real], optional
+           :param weight: The weight of the photon batch. Can be a single value or an iterable matching the batch size. Defaults to 1.
+           :type weight: Union[Real, Iterable[Real]], optional
+           :param russian_roulette_constant: The constant used for photon survival in the Russian roulette process. Defaults to 20.
+           :type russian_roulette_constant: Real, optional
+           :param recurse: A flag indicating whether recursion is allowed in the simulation. Defaults to True.
+           :type recurse: bool, optional
+           :param recursion_depth: The current depth of recursion. Defaults to 0.
+           :type recursion_depth: int, optional
+           :param recursion_limit: The limit for recursion depth. Defaults to 100.
+           :type recursion_limit: Real, optional
+           :param throw_recursion_error: A flag indicating whether to throw an error when the recursion limit is exceeded. Defaults to True.
+           :type throw_recursion_error: bool, optional
+           :param keep_secondary_photons: A flag indicating whether to retain secondary photons in the simulation. Defaults to False.
+           :type keep_secondary_photons: bool, optional
+           :param tir_limit: The limit for total internal reflection (TIR). Defaults to infinity.
+           :type tir_limit: Real, optional
+
+           Initializes the photon state, sets up directional cosines, location coordinates, and weight for the photon batch.
+           Sets up trackers for exit direction, exit location, exit weight, and secondary photons. Initializes photon
+           tracking history, such as location and weight history, as well as recursion and TIR count trackers.
+
+           """
 
         # Init photon state
         self.batch_size = n
@@ -520,28 +608,45 @@ class Photon:
         self.T = 0.
         self.R = 0.
 
-    # EXPLANATION OF INDEXABLE_PROPERTIES
-    # When one of these properties, obj, is used in the form obj = value, it will call the setter, which sets the
-    # attribute to an indexable_property object with value. When it is used in the form obj[i] = val, the getter is
-    # called to return obj. Then, the indexable_property __setitem__ is called to update obj. This should ensure that
-    # these properties are always np.ndarrays and (when set) are normalized.
     @property
     def directional_cosines(self) -> IndexableProperty[Real]:
+        """
+        Retrieves the current value of the photon directional cosines.
+
+        :return: The current value of the directional cosines, wrapped in an `IndexableProperty` object.
+        :rtype: IndexableProperty[Real]
+        """
         return self._directional_cosines
 
     @directional_cosines.setter
     def directional_cosines(self, value: Iterable[Real]) -> None:
+        """
+        Setter for the photon directional cosines that ensures the normalization is maintained.
+
+        This setter automatically re-assigns the updated value to an indexable property object,
+        which handles normalization both at creation and when setting values using an indexed `__setitem__`.
+
+        :param value: An iterable of real numbers representing the directional cosines of the photon.
+        :type value: Iterable[Real]
+        :return: This method updates the directional cosines and does not return any value.
+        :rtype: None
+        """
         self._directional_cosines = IndexableProperty(value, normalize=True)
 
-    @property
-    def location_coordinates(self) -> IndexableProperty[Real]:
-        return self._location_coordinates
-
-    @location_coordinates.setter
-    def location_coordinates(self, value: Iterable[Real]) -> None:
-        self._location_coordinates = IndexableProperty(value)
-
     def copy(self, **kwargs) -> Photon:
+        """
+        Creates a deep copy of the Photon object and allows for overwriting specific attributes using **kwargs.
+
+        This method creates a new instance of the Photon object with the same attributes as the original. It can also
+        overwrite the values of specified attributes using the keyword arguments passed to it. The tracker attributes
+        (`T`, `R`, `A`, `tir_count`, `recursed_photons`) are automatically reset to 0 in all cases.
+
+        :param kwargs: Keyword arguments representing attributes to overwrite in the copied object.
+        :type kwargs: dict
+        :return: A new Photon object that is a deep copy of the original, with overwritten attributes if provided.
+        :rtype: Photon
+        """
+
         new_obj = copy.deepcopy(self)
 
         # Check for kwarg overwrites
@@ -559,12 +664,37 @@ class Photon:
         return new_obj
 
     def __repr__(self) -> str:
+        """
+        Returns a string representation of the Photon object for quick debugging or analysis.
+
+        This method generates a human-readable string that includes the object's attributes and their values,
+        providing an easy way to inspect the state of the Photon.
+
+        :return: A string representation of the Photon object.
+        :rtype: str
+        """
         out = ''
         for key, val in self.__dict__.items():
             out += f"{key.strip('_')}: {val}\n"
         return out
 
     def simulate(self) -> None:
+        """
+        Simulates the behavior of a batch of photons until all photons are terminated and updates the object's
+        attributes accordingly.
+
+        The simulation involves the following steps:
+        - **Absorption**: Photons interact with the medium and may be absorbed. (See `self.absorb`).
+        - **Movement**: Photons move within the medium. (See `self.move`).
+        - **Scattering**: Photons may scatter as they travel through the medium. (See `self.scatter`).
+
+        The exact behavior of these events depends on the optical properties of the `Medium` object the photon is in,
+        which is determined through queries to the `System` that contains the photon, i.e., `self.system`.
+
+        :return: This method runs the simulation and does not return any value.
+        :rtype: None
+        """
+
         assert self.system is not None, RuntimeError('Photon must be in an Optical System object to simulate.')
         if self.recursion_depth >= self.recursion_limit:
             if not self.throw_recursion_error:
@@ -586,59 +716,102 @@ class Photon:
 
     @property
     def weight(self) -> NDArray[Real]:
+        """
+        Retrieves the current weight of the photons.
+
+        :return: An array of real values representing the photon weights.
+        :rtype: NDArray[Real]
+        """
         return self._weight
 
     @weight.setter
     def weight(self, weight: Union[Real, Iterable[Real]]) -> None:
-        # If one weight is given, batch for all photons in batch
-        if isinstance(weight, Real):
-            weight *= np.ones(self.batch_size)
-        self._weight = weight
-        rr_check = (0 < weight) & (weight < 0.005)
-        if np.any(rr_check):
-            self.russian_roulette(rr_check)
+        """
+        Sets the photon weight and applies Russian roulette if the weight falls below the threshold of 0.005.
+
+        If the weight is below 0.005, the `russian_roulette` method is called to determine whether the photon
+        survives or is terminated.
+
+        :param weight: The new weight value(s) to set. Can be a single real number or an iterable of real numbers.
+        :type weight: Union[Real, Iterable[Real]]
+        :return: This method updates the weight in place and does not return a value.
+        :rtype: None
+        """
 
     def russian_roulette(self, mask: NDArray[np.bool_]) -> None:
-        survival = np.random.rand(np.count_nonzero(mask)) < (1 / self.russian_roulette_constant)
-        self._weight[mask] = np.where(survival, self._weight[mask] * self.russian_roulette_constant, 0)
+        """
+        Determines photon survival using the Russian roulette technique.
+
+        If a photon survives, its weight is increased by `self.russian_roulette_constant`.
+        If it does not survive, its weight is set to `0`, effectively terminating it.
+
+        :param mask: A boolean array where `True` indicates that the corresponding photon is
+                     subject to the Russian roulette survival test.
+        :type mask: NDArray[np.bool_]
+        :return: This method modifies photon weights in place and does not return a value.
+        :rtype: None
+        """
 
     @property
     def medium(self) -> NDArray[Medium]:
+        """
+        Determines the current medium for the photons.
+
+        If the photons are at an interface, the function returns the medium the photon is moving into,
+        using `headed_into`. Otherwise, it returns the current medium.
+
+        :return: An array of `Medium` objects representing the current medium for the photons.
+        :rtype: NDArray[Medium]
+        """
+
         self._medium = self.system.in_medium(self.location_coordinates)
         tuple_mask = np.array([isinstance(medium, (tuple, list)) for medium in self._medium])
         if np.any(tuple_mask):
-            self._medium[tuple_mask] = self.headed_into[tuple_mask]
+            self._medium[tuple_mask] = self.headed_into(mediums=self._medium)[tuple_mask]
         return self._medium
 
     @property
     def is_terminated(self) -> np.bool_:
+        """
+        Checks if there are still photons in the batch to simulate.
+
+        This property returns `True` if all photons have been terminated (i.e., they have exited the simulation
+        or met termination criteria). Otherwise, it returns `False`.
+
+        :return: A boolean value indicating whether the simulation has completed for all photons.
+        :rtype: np.bool_
+        """
+
         self._is_terminated = np.all((self.medium == self.system.surroundings) | (self.weight <= 0.0))
         return self._is_terminated
 
-    @property
-    def headed_into(self) -> NDArray[Medium]:
-        bumped_coords = self.location_coordinates.copy()
-        medium = np.array([None] * len(bumped_coords), dtype=object)  # Placeholder for batch results
+    def headed_into(self, mediums: Optional[NDArray[Union[Medium, Tuple[Medium, Medium]]]] = None) -> NDArray[Medium]:
+        """
+        Determines which medium a photon is headed into, particularly when at an interface.
 
-        # While some photons still have (list, tuple) as their medium, update them
-        active = np.ones(len(bumped_coords), dtype=bool)
+        If `mediums` is provided, the function uses it instead of re-querying `self.system.in_mediums` to determine the
+        current state. In cases where `mediums` contains tuples `(Medium, Medium)`, the function selects the appropriate
+        medium based on direction:
+        - The first element (index `0`) represents the negative-direction medium.
+        - The second element (index `1`) represents the positive-direction medium.
 
-        while np.any(active):
-            # Query medium for only active photons
-            new_medium = np.array(self.system.in_medium(bumped_coords[active]), dtype=object)
+        If `mediums` is not a tuple, the function simply returns the same medium.
 
-            # Update those that have exited the list/tuple stage
-            mask_done = ~np.array([isinstance(m, (list, tuple)) for m in new_medium])
-            medium[active] = np.where(mask_done, new_medium, medium[active])
+        :param mediums: An optional array of mediums. Each element can be:
+            - A `Medium` object, indicating a single medium.
+            - A tuple `(Medium, Medium)`, representing a negative and positive medium pair at an interface.
+            If not provided, the function queries `self.system.in_mediums` instead.
+        :type mediums: NDArray[Union[Medium, Tuple[Medium, Medium]]], optional
+        :return: An array of `Medium` objects representing the medium the photon is headed into.
+        :rtype: NDArray[Medium]
+        """
 
-            # Stop processing photons that have found their medium
-            active[active] = ~mask_done
+        mediums = self.system.in_medium(self.location_coordinates) if mediums is None else mediums
+        in_mask = np.array([isinstance(medium, (tuple, list)) for medium in mediums])
+        headed_into = np.where(in_mask, mediums,
+                               np.where(self.directional_cosines[:, 2] < 0, mediums[0], mediums[1]))
 
-            # Increment active photons by a small step in their direction
-            bumped_coords[active] = np.nextafter(bumped_coords[active],
-                                                 bumped_coords[active] + self.directional_cosines[active])
-
-        return medium
+        return headed_into
 
     # TODO: Add support for fluorescence-based secondary photons
     def absorb(self) -> None:
@@ -681,7 +854,7 @@ class Photon:
         self.weight_history = np.append(self.weight_history, self.weight[..., np.newaxis], axis=1)
 
         # Check if any new photons exited
-        exit_mask = (self.headed_into == self.system.surroundings) & (self.weight > 0)
+        exit_mask = (self.headed_into() == self.system.surroundings) & (self.weight > 0)
 
         if np.any(exit_mask):
             self.exit_location[exit_mask] = self.location_history[exit_mask, ..., -1]

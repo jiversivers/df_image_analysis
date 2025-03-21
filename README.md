@@ -1,4 +1,4 @@
-# Monte Carlo
+# Photon Canon
 > An in-depth 3D Monte Carlo simulation toolbox with custom systems of planar mediums, custom beams and detectors
 
 ## Table of Contents
@@ -25,4 +25,4 @@
 To install the project and its dependencies, run the following command:
 
 ```bash
-pip install monte_carlo
+pip install photon-canon

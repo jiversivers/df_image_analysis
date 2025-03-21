@@ -1,3 +1,4 @@
+import os.path
 from numbers import Real
 from typing import Union, Tuple, Iterable
 
@@ -10,7 +11,7 @@ from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator
 
 # Setup default database and MCLUT version
-con = sqlite3.connect(f'data/databases/lut.db')
+con = sqlite3.connect(f'lut.db')
 c = con.cursor()
 try:
     c.execute("SELECT max(id) FROM mclut_simulations")
@@ -66,7 +67,7 @@ def lookup(mu_s: Real,
     return interpolated_ref
 
 
-df = pd.read_csv('data/hbo2_hb.tsv', sep='\t', skiprows=1)
+df = pd.read_csv(f'hbo2_hb.tsv', sep='\t', skiprows=1)
 wl, hbo2, dhb = df['lambda'], df['hbo2'], df['hb']
 wl = np.array([float(w) for w in wl[1:]])
 hbo2 = np.array([float(h) for h in hbo2[1:]])
@@ -140,3 +141,21 @@ def simulate(system: "System", n: int, **kwargs) -> Tuple[float, float, float]:
     photons = system.beam(n=n, **kwargs)
     photons.simulate()
     return photons.T, photons.R, photons.A
+
+
+def sample_spectrum(wavelengths: Iterable[Real],
+                    spectrum: Iterable[Real]):
+    wavelengths = np.asarray(wavelengths)
+    spectrum = np.asarray(spectrum)
+
+    # Normalize PDF
+    spectrum /= np.sum(spectrum)
+
+    # Compute CDF
+    cdf = np.cumsum(spectrum)
+
+    # Take random sample
+    i = np.random.uniform(0, 1)
+
+    # Interpolate value of sample from CDF
+    return np.interp(i, cdf, wavelengths)

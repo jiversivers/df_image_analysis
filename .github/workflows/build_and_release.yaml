@@ -37,6 +37,8 @@ jobs:
           git add requirements.txt pyproject.toml
           git commit -m "Auto-update requirements.txt and pyproject.toml" || exit 0
           git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-and-publish:
     needs: update-requirements

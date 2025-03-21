@@ -4,12 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - '*'
-  release:
-    types:
-      - 'published'
-      - 'prereleased'
 
 jobs:
   update-requirements:
@@ -49,26 +43,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
-  create-prerelease:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: update-requirements
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Publish release
-        run: |
-          TAG_NAME=$(git describe --tags --abbrev=0)
-          curl -X POST \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            -d "{\"tag_name\":\"$TAG_NAME\",\"name\":\"Release $TAG_NAME\",\"draft\":false,\"prerelease\":true}" \
-            https://api.github.com/repos/${{ github.repository }}/releases
-
   build-and-publish:
     needs: update-requirements
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Checkout repository
@@ -79,11 +57,11 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install build tools
+        run: pip install toml build twine
+
       - name: Update Version
         run: python .github/scripts/set_version.py
-
-      - name: Install build tools
-        run: pip install build twine
 
       - name: Build the package
         run: python -m build
@@ -93,3 +71,11 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.GH_PYPI }}
         run: twine upload dist/*
+
+      - name: Publish pre-release
+        run: |
+          TAG_NAME=$(git describe --tags --abbrev=0)
+          curl -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -d "{\"tag_name\":\"$TAG_NAME\",\"name\":\"Release $TAG_NAME\",\"draft\":false,\"prerelease\":true}" \
+            https://api.github.com/repos/${{ github.repository }}/releases

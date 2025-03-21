@@ -31,8 +31,8 @@ mu_s, mu_a, wl = calculate_mus()
 class Medium:
     def __init__(self,
                  n: Real = 1,
-                 mu_s: Union[Real, Iterable[Real]] = mu_s,
-                 mu_a: Union[Real, Iterable[Real]] = mu_a,
+                 mu_s: Union[Real, Iterable[Real]] = 0,
+                 mu_a: Union[Real, Iterable[Real]] = 0,
                  wavelengths: Iterable[Real] = wl,
                  g: Real = 1,
                  desc: str = 'default',
@@ -131,7 +131,8 @@ class Illumination:
     def photon(self, batch_size: int = 50000, **kwargs: Any) -> Photon:
         location, direction = self.pattern(batch_size)
         wavelength = sample_spectrum(self.spectrum) if self.spectrum else None
-        return Photon(wavelength, batch_size=batch_size, location_coordinates=location, directional_cosines=direction, **kwargs)
+        return Photon(wavelength, batch_size=batch_size, location_coordinates=location, directional_cosines=direction,
+                      **kwargs)
 
 
 class Detector:
@@ -456,10 +457,11 @@ class System:
 class IndexableProperty(np.ndarray):
     def __new__(cls,
                 arr: Iterable,
-                normalize: bool = False) -> IndexableProperty:
-        obj = np.asarray(arr, dtype=np.float64).view(cls)
+                normalize: bool = False,
+                dtype: Optional[np.dtype] = None) -> IndexableProperty:
+        obj = np.asarray(arr, dtype=dtype).view(cls)
         obj.normalize = normalize
-        obj /= np.linalg.norm(obj, axis=1)[:, np.newaxis] if normalize else 1
+        obj /= np.linalg.norm(obj, axis=-1)[..., np.newaxis] if normalize else 1
         return obj
 
     def __array_finalize__(self, obj: Optional[NDArray]):
@@ -475,14 +477,14 @@ class IndexableProperty(np.ndarray):
     def normalize(self, value: bool):
         self._normalize = value
         if self._normalize:
-            self /= np.linalg.norm(self, axis=1)[:, np.newaxis]
+            self /= np.linalg.norm(self, axis=-1)[..., np.newaxis]
 
     def __setitem__(self,
                     index: int,
                     value: Real):
         super().__setitem__(index, value)
         if self.normalize:
-            self /= np.linalg.norm(self, axis=1)[:, np.newaxis]
+            self /= np.linalg.norm(self, axis=-1)[..., np.newaxis]
 
     def __getitem__(self, index: int) -> IndexableProperty[Real]:
         item = super().__getitem__(index)
@@ -611,38 +613,9 @@ class Photon:
         self.tir_limit = tir_limit
 
         # Setup batched attributes
-        directional_cosines = np.asarray(directional_cosines, dtype=np.float64)
-        if np.ndim(directional_cosines) == 1:
-            directional_cosines = np.repeat(directional_cosines[np.newaxis, ...], batch_size, axis=0)
-        else:
-            if not np.shape(directional_cosines)[0] == batch_size and np.shape(directional_cosines)[1] == 3:
-                raise ValueError(
-                    f'Directional cosine input is incompatible with batch size. Input bust be shape (3,) or ({batch_size}, 3) but '
-                    f'the input is {np.shape(directional_cosines)}'
-                )
-        self._directional_cosines = IndexableProperty(directional_cosines)
-
-        location_coordinates = np.asarray(location_coordinates, dtype=np.float64)
-        if np.ndim(location_coordinates) == 1:
-            location_coordinates = np.repeat(location_coordinates[np.newaxis, ...], batch_size, axis=0)
-        else:
-            if not np.shape(location_coordinates)[0] == batch_size and np.shape(location_coordinates)[1] == 3:
-                raise ValueError(
-                    f'Directional cosine input is incompatible with batch size. Input bust be shape (3,) or ({batch_size}, 3) but '
-                    f'the input is {np.shape(location_coordinates)}'
-                )
-        self._location_coordinates = location_coordinates
-
-        weights = np.asarray(weights, dtype=np.float64)
-        if not iterable(weights) or np.shape(weights) == (1,):
-            weights = np.repeat(weights[np.newaxis, ...], batch_size, axis=0)
-        else:
-            if not np.shape(weights)[0] == batch_size and np.shape(weights)[1] == 1:
-                raise ValueError(
-                    f'Directional cosine input is incompatible with batch size. Input bust be shape (1,) or ({batch_size}, 1) but '
-                    f'the input is {np.shape(weights)}'
-                )
-        self._weights = weights
+        self._directional_cosines = IndexableProperty(self._batch_fill(directional_cosines, dtype=np.float64))
+        self._location_coordinates = self._batch_fill(location_coordinates, dtype=np.float64)
+        self._weights = self._batch_fill(weights)
 
         # Init all-false cache register (so medium will be filled in for all)
         self.cache_register = np.repeat(np.False_, self.batch_size, axis=0)
@@ -652,12 +625,12 @@ class Photon:
         self.at_interface = np.empty((self.batch_size,), dtype=np.bool_)
 
         # Exit trackers
-        self.exit_direction = np.empty_like(directional_cosines)
-        self.exit_direction[...] = np.nan
-        self.exit_location = np.empty_like(location_coordinates)
-        self.exit_location[...] = np.nan
-        self.exit_weights = np.empty(batch_size)
-        self.exit_weights[...] = np.nan
+        self.exit_direction = np.empty_like(self.directional_cosines)
+        self.exit_direction[:] = np.nan
+        self.exit_location = np.empty_like(self.location_coordinates)
+        self.exit_location[:] = np.nan
+        self.exit_weights = np.empty(self.batch_size)
+        self.exit_weights[:] = np.nan
 
         self.secondary_photons = []
 
@@ -672,6 +645,36 @@ class Photon:
         self.A = 0.
         self.T = 0.
         self.R = 0.
+
+    def _batch_fill(self, value: Union[Iterable, NDArray], dtype: Optional[np.dtype] = None) -> NDArray:
+        """
+        Provides a filled-in array that matches the batch size of the photon.
+
+        This helper method ensures a value is correctly expanded to match the batch size when necessary.
+
+        :param value: The value to assign, either an IndexableProperty or an NDArray. This will be expanded
+                      to match the batch size.
+        :type value: Union[IndexableProperty, NDArray]
+        :return: A numpy array with the correct batch size.
+        :rtype: NDArray[np.float64]
+        """
+        value = np.asarray(value, dtype=dtype)
+        # Return already batched inputs
+        if value.shape and value.shape[0] == self.batch_size:
+            return value
+
+        # Determine singlet size of value (in cases of pre-dimed/unsqueezed arrays, shape[-1] will give singlet shape)
+        base_shape = 1 if np.ndim(value) == 0 else np.shape(value)[-1]
+        if np.ndim(value) <= 1:
+            value = np.repeat(value[np.newaxis, ...], self.batch_size, axis=0)
+        elif np.ndim(value) == 2 and np.shape(value)[0] == 1:
+            value = np.repeat(value, self.batch_size, axis=0)
+        else:
+            raise ValueError(
+                f'Input is incompatible with batch size. Input must be shape ({base_shape},) or '
+                f'({self.batch_size}, {base_shape}) but the input is {np.shape(value)}'
+            )
+        return value
 
     @property
     def location_coordinates(self) -> NDArray[Real]:
@@ -692,8 +695,8 @@ class Photon:
         :return: 
         """
 
-        # Ensure ndarray
-        location_coordinates = np.asarray(location_coordinates, dtype=np.float64)
+        # Ensure ndarray and fill to batch size
+        location_coordinates = self._batch_fill(np.asarray(location_coordinates, dtype=np.float64))
 
         # Determine change status
         unchanged = (location_coordinates[:, 2] == self.location_coordinates[:, 2])
@@ -728,11 +731,11 @@ class Photon:
         :return: This method updates the directional cosines and does not return any value.
         :rtype: None
         """
-        # Ensure Indexable Property
-        directional_cosines = IndexableProperty(directional_cosines, normalize=True)
+        # Ensure Indexable Property and fill to batch size
+        directional_cosines = IndexableProperty(self._batch_fill(directional_cosines, dtype=np.float64), normalize=True)
 
         # Determine changed directions
-        unchanged = (np.sign(directional_cosines[:, 2]) == np.sign(self.directional_cosines[:, 2]))
+        unchanged = (np.sign(directional_cosines[..., 2]) == np.sign(self.directional_cosines[:, 2]))
 
         # Set directional cosines
         self._directional_cosines = directional_cosines
@@ -841,9 +844,9 @@ class Photon:
         :return: This method updates the weights in place and does not return a value.
         :rtype: None
         """
-        if isinstance(weights, Real):
+        if isinstance(weights, Real) or np.shape(weights)[0] == 1:
             weights *= np.ones(self.batch_size)
-        self._weights = weights
+        self._weights = np.where(weights > 0, weights, 0)
         rr_check = (0 < weights) & (weights < 0.005)
         if np.any(rr_check):
             self.russian_roulette(rr_check)
@@ -997,11 +1000,13 @@ class Photon:
         if step is None:
             step = np.where(mu_t > 0, -np.log(np.random.rand(self.batch_size)) / mu_t, float('inf'))
             step = np.where(self.weights > 0, step, 0)
+        step = self._batch_fill(step)
         new_loc = loc + step[:, np.newaxis] * dir_cos
 
         # Determine which photons cross an interfaces
         interface, plane = self.system.interface_crossed(loc, new_loc)
         crossed = (~np.isnan(plane)) if plane is not None else False
+        move_to_interface = False
         if np.any(crossed):
             interface_steps = np.where(crossed, (plane - loc[:, 2]) / dir_cos[:, 2], float('inf'))
 
@@ -1010,12 +1015,12 @@ class Photon:
             new_loc[move_to_interface] = (loc[move_to_interface] + interface_steps[move_to_interface, np.newaxis]
                                           * dir_cos[move_to_interface])
 
-            # Reflect/refract photons at interfaces
-            if np.any(move_to_interface):
-                self.reflect_refract(interface, move_to_interface)
-
         # Update location
         self.location_coordinates = new_loc
+
+        # Reflect/refract photons at interfaces
+        if np.any(move_to_interface):
+            self.reflect_refract(interface, move_to_interface)
 
         # Update history for all photons
         self.location_history = np.append(self.location_history, new_loc[..., np.newaxis], axis=2)
@@ -1087,7 +1092,7 @@ class Photon:
 
         if self.recurse:
             # Setup new photon attributes
-            batch_size = np.sum(refract_mask)
+            batch_size = np.sum(refract_mask).item()
             dir_cos = np.array([[1, 1, -1]]) * self.directional_cosines[mask][refract_mask]  # Flipped for reflection
             weights = specular_reflection
             loc_cor = self.location_coordinates[mask][refract_mask]
@@ -1114,8 +1119,8 @@ class Photon:
                 self.T += secondary_photons.T
                 self.A += secondary_photons.A
                 if self.keep_secondary_photons:
-                    self.secondary_photons += secondary_photons
-
+                    self.secondary_photons.append(secondary_photons)
+                    self.secondary_photons += secondary_photons.secondary_photons
 
         else:
             # If the reflected fraction will be reflected out, add it to reflected count, Else add it to transmitted
@@ -1124,16 +1129,17 @@ class Photon:
             self.R += np.sum(specular_reflection * reflected_out)
             self.T += np.sum(specular_reflection * transmitted_out)
 
-            w_temp = self.weights[mask].copy()
-            w_temp[refract_mask] -= specular_reflection
-            self.weights[mask] = w_temp
+        w_temp = self.weights[mask].copy()
+        w_temp[refract_mask] -= specular_reflection
+        self.weights[mask] = w_temp
 
         # Send to setter for normalization
         self.directional_cosines[mask] = np.column_stack((mu_x, mu_y, mu_z_t))
 
     def scatter(self, theta_phi: Optional[Union[Iterable[Real, Real], Iterable[Iterable[Real, Real]]]] = None):
-        # Early break if all are at an interface
-        if np.all(self.at_interface):
+        # Early break if all are at an interface or in non-scattering medium
+        g = np.array([medium.g for medium in self.medium])  # (also forces eset of interface cache where necessary)
+        if np.all(self.at_interface) or np.all(g == 1):
             return
 
         # Placeholders for angle samples
@@ -1142,7 +1148,6 @@ class Photon:
         if theta_phi is None:
             # Sample random scattering angles from distribution
             [xi, zeta] = np.random.rand(self.batch_size, 2).T
-            g = np.array([medium.g for medium in self.medium])
 
             # For non-zero g
             non_zero_g_mask = g != 0
@@ -1232,21 +1237,3 @@ class Photon:
                 axes.invert_zaxis()
 
         return fig, axes
-
-
-def sample_spectrum(wavelengths: Iterable[Real],
-                    spectrum: Iterable[Real]):
-    wavelengths = np.asarray(wavelengths)
-    spectrum = np.asarray(spectrum)
-
-    # Normalize PDF
-    spectrum /= np.sum(spectrum)
-
-    # Compute CDF
-    cdf = np.cumsum(spectrum)
-
-    # Take random sample
-    i = np.random.uniform(0, 1)
-
-    # Interpolate value of sample from CDF
-    return np.interp(i, cdf, wavelengths)

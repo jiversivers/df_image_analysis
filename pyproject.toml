@@ -1,0 +1,30 @@
+[build-system]
+requires = [ "setuptools", "wheel",]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "monte_carlo"
+version = "0.1.0"
+description = "An in-depth 3D Monte Carlo simulation toolbox with custom systems of planar mediums, custom beams and detectors."
+readme = "README.md"
+requires-python = ">=3.12"
+keywords = [ "simulation", "parallel", "monte carlo", "photon",]
+dependencies = [ "matplotlib==3.7.1", "numpy==1.24.2", "pandas==2.0.3", "scipy==1.15.2",]
+[[project.authors]]
+name = "Jesse D Ivers"
+email = "iversjesse@gmail.com"
+
+[project.license]
+file = "LICENSE.txt"
+
+[project.optional-dependencies]
+dev = [ "toml", "cupy",]
+test = [ "unittest",]
+
+[project.urls]
+Homepage = "https://www.github.com/jiversivers/monte_carlo"
+Source = "https://www.github.com/jiversivers/monte_carlo"
+"Check me out" = "https://www.jivers.me"
+
+[tools.setuptools.package-data]
+defaults = [ "data/*.tsv", "data/databases",]

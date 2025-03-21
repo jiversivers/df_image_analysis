@@ -43,7 +43,7 @@ jobs:
           git commit -m "Auto-update requirements.txt and pyproject.toml" || exit 0
           git push origin main --force
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
   create-prerelease:
     if: startsWith(github.ref, 'refs/tags/')

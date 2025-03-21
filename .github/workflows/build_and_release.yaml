@@ -38,6 +38,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch
           git checkout main
           git add requirements.txt pyproject.toml
           git commit -m "Auto-update requirements.txt and pyproject.toml" || exit 0

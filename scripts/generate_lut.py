@@ -1,7 +1,7 @@
 import itertools
 import sqlite3
 
-from src import Medium, System, Detector, Illumination, hardware
+from src.monte_carlo import Medium, System, Detector, Illumination, hardware
 
 from tqdm import tqdm
 

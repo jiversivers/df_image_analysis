@@ -1,0 +1,68 @@
+name: Update Requirements & Publish Release
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types: [ published ]
+
+jobs:
+  update-requirements:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: pip install pipreqs toml
+
+      - name: Generate requirements.txt
+        run: |
+          pipreqs ./src --force
+          mv ./src/requirements.txt ./
+
+      - name: Update pyproject.toml
+        run: python .github/scripts/fill_toml_reqs.py
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add requirements.txt pyproject.toml
+          git commit -m "Auto-update requirements.txt and pyproject.toml" || exit 0
+          git push
+
+  build-and-publish:
+    needs: update-requirements
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Update Version
+        run: python .github/scripts/set_version.py
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build the package
+        run: python -m build
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.GH_PYPI }}
+        run: twine upload dist/*

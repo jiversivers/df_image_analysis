@@ -1,7 +1,7 @@
 import toml
 
 
-def update_pyproject_toml():
+def fill_toml_reqs():
     # Read the existing pyproject.toml file
     with open('pyproject.toml', 'r') as file:
         toml_data = toml.load(file)
@@ -33,4 +33,4 @@ def update_pyproject_toml():
 
 
 if __name__ == "__main__":
-    update_pyproject_toml()
+    fill_toml_reqs()

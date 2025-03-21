@@ -1,8 +1,6 @@
 # Monte Carlo
 > An in-depth 3D Monte Carlo simulation toolbox with custom systems of planar mediums, custom beams and detectors
 
-> A brief description of your project and its purpose.
-
 ## Table of Contents
 
 - [Project Description](#project-description)

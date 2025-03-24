@@ -130,6 +130,7 @@ detection even further.
 - Numpy/Cupy
 - Pandas
 - Scipy
+- Matplotlib
 
 ## Installation
 

@@ -68,24 +68,23 @@ Scattering when g is not 0 is based on the Henyey-Greenstein phase function foll
 
 and the polar angle is updated using a uniform distribution between 0 and 2&pi;:
 
-<img src="https://latex.codecogs.com/svg.latex?\phi = 2\pi\xi">
+<img src="https://latex.codecogs.com/svg.latex?\phi=2\pi\xi">
 
 #### Absorption
 Absorption simply updates the weight as follows
 
-<img src="https://latex.codecogs.com/svg.latex?W' \mathrel{-}\mathrel{=} \frac{\mu_a}{\mu_a + \mu_s}W">
+<img src="https://latex.codecogs.com/svg.latex?W\mathrel{-}\mathrel{=}\frac{\mu_a}{\mu_a+\mu_s}W">
 
 
 #### Move
 Step sizes (when not input by the user) are determined for the moves by sampling the mean free path based on the 
 total interaction coefficient, &mu;<sub>t</sub>, defined as:
 
-<img src="https://latex.codecogs.com/svg.latex?\mu_t = \mu_s + \mu_a">
+<img src="https://latex.codecogs.com/svg.latex?\mu_t=\mu_s+\mu_a">
 
 Sampling is derived using the inverse distribution method and Beer-Lambert Law, yielding the following:
 
-<img src="https://latex.codecogs.com/svg.latex? s = -\frac{\ln\xi}{\mu_t}">
-
+<img src="https://latex.codecogs.com/svg.latex?s=-\frac{\ln\xi}{\mu_t}">
 
 #### Medium
 `Medium` objects are simply wrappers for optical properties, namely, n, &#956;<sub>s</sub>, &#956;<sub>a</sub>, and g. 

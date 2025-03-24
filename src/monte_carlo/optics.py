@@ -8,7 +8,7 @@ from typing import Union, Optional, Iterable, Tuple, Callable, List, Dict, Any
 from matplotlib import pyplot as plt, animation
 
 from .hardware import ring_pattern, cone_of_acceptance, ID, OD, THETA
-from .utils import calculate_mus
+from .utils import calculate_mus, sample_spectrum
 
 try:
     import cupy as np
@@ -314,9 +314,9 @@ class System:
 
     def in_medium(self, location: Iterable[Real]) -> NDArray[Union[Medium, Tuple[Medium, Medium]]]:
         """
-        Return the medium(s) that are at the queried coordinate. If the coordinate is an interfaces location, the mediums
-        that makeup the interfaces are returned as a tuple, this includes boundary interfaces being returned with False
-        on the surroundings side.
+        Return the medium(s) that are at the queried coordinate. If the coordinate is an interfaces location, the
+        mediums that makeup the interfaces are returned as a tuple, this includes boundary interfaces being returned
+        with False on the surroundings side.
 
         ### Process
         1. Get the z-coordinate from the input
@@ -825,6 +825,7 @@ class Photon:
     def weights(self) -> NDArray[Real]:
         """
         Retrieves the current weights of the photons.
+        Retrieves the current weights of the photons.
 
         :return: An array of real values representing the photon weights.
         :rtype: NDArray[Real]
@@ -1046,8 +1047,26 @@ class Photon:
             self.weights[exit_mask] = 0
 
     def reflect_refract(self,
-                        interfaces: Iterable[Tuple[Medium, Medium]],
+                        interfaces: NDArray[object[Tuple[Medium, Medium], Tuple[None]]],
                         mask: NDArray[np.bool_]) -> None:
+        """
+        Computes photon reflection and refraction at interfaces.
+
+        This method determines the weight of photon reflection and updates the tracker's direction accordingly.
+        If reflection occurs, it either updates the photon direction or spawns secondary photons with adjusted weights
+        to continue the recursive simulation. The photon's direction is updated based on the interface's refractive
+        indices. This operation is performed only on photons specified by the input mask.
+
+        :param interfaces: NumPy array containing interface definitions.
+                           Each element is a tuple of (Medium, Medium) for a valid interface or (None,) if no interface
+                           is present.
+        :type interfaces: np.ndarray[object]
+        :param mask: Boolean mask indicating which photons to process.
+        :type mask: NDArray[np.bool_]
+        :return: None. The photon's direction and weight are updated along with relevant trackers,
+                 and secondary photons are spawned if necessary.
+        """
+
         # Get incidence state
         mu_x, mu_y, mu_z_i = self.directional_cosines[mask].T
         mu_z_t = np.zeros_like(mu_z_i)
@@ -1137,6 +1156,14 @@ class Photon:
         self.directional_cosines[mask] = np.column_stack((mu_x, mu_y, mu_z_t))
 
     def scatter(self, theta_phi: Optional[Union[Iterable[Real, Real], Iterable[Iterable[Real, Real]]]] = None):
+        """
+        This method updates the direciton of the photon members where they are in scattering media, but not at an
+        interface.
+
+        :param theta_phi: Angles to udpte direction with. Optional.
+        :type theta_phi: Union[Iterable[Real, Real], Iterable[Iterable[Real, Real]]]
+        :return: None. Updates photon directions where the photon is in scattering media (but not at an interface)
+        """
         # Early break if all are at an interface or in non-scattering medium
         g = np.array([medium.g for medium in self.medium])  # (also forces eset of interface cache where necessary)
         if np.all(self.at_interface) or np.all(g == 1):
@@ -1157,7 +1184,7 @@ class Photon:
             cosine_theta[non_zero_g_mask] = lead_coeff * (1 + term_2 - term_3)
 
             # For g=0
-            cosine_theta[~non_zero_g_mask] = (2 * xi[~non_zero_g_mask]) - 1
+            cosine_theta[~non_zero_g_mask] = 1 - (2 * xi[~non_zero_g_mask])
 
             theta = np.arccos(cosine_theta)
             phi = 2 * np.pi * zeta
@@ -1198,7 +1225,32 @@ class Photon:
         # Update directional cosines with new direciton (done at once for normalization consistency)
         self.directional_cosines[~self.at_interface] = new_directional_cosines[~self.at_interface]
 
-    def plot_path(self, project_onto=None, axes=None, ignore_outside=True):
+    def plot_path(
+            self,
+            project_onto: Optional[str] = None,
+            axes: Optional[plt.Axes] = None,
+            ignore_outside: bool = True
+    ) -> None:
+        """
+        Visualizes the photon location histories as a 2D or 3D plot.
+
+        - If `project_onto` is specified, the path is projected onto a 2D plane.
+          Accepted values: 'xy', 'xz', 'yz'.
+        - If `project_onto` is None, a 3D plot is generated.
+        - If `axes` is provided, the plot is drawn on the given `matplotlib.Axes` object.
+          Otherwise, a new figure and axes are created.
+        - If `ignore_outside` is True (default), only locations within the system are plotted,
+          and steps after exit are truncated.
+
+        :param project_onto: Plane onto which the path is projected ('xy', 'xz', 'yz'), or None for 3D.
+        :type project_onto: Optional[str]
+        :param axes: Matplotlib Axes object for plotting, or None to create new axes.
+        :type axes: Optional[plt.Axes]
+        :param ignore_outside: Whether to ignore steps after exiting the system (default: True).
+        :type ignore_outside: bool
+        :return: None
+        """
+
         project_onto = ['xz', 'yz', 'xy'] if project_onto == 'all' else project_onto
         project_onto = [project_onto] if isinstance(project_onto, str) or project_onto is None else project_onto
         batch_size, _, steps = self.location_history.shape  # Expect shape (batch, 3, steps)

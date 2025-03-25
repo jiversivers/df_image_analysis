@@ -3,9 +3,9 @@ import unittest
 
 import numpy as np
 
-from src.monte_carlo import System, Medium, Illumination, Detector
-from src.monte_carlo.optics import Photon, IndexableProperty
-from src.monte_carlo.hardware import ring_pattern, cone_of_acceptance, ID, OD, THETA
+from photon_canon import System, Medium, Illumination, Detector
+from photon_canon.optics import Photon, IndexableProperty
+from photon_canon.hardware import ring_pattern, cone_of_acceptance, ID, OD, THETA
 from random import random
 
 

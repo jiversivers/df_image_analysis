@@ -34,6 +34,7 @@ class Medium:
                  mu_s: Union[Real, Iterable[Real]] = 0,
                  mu_a: Union[Real, Iterable[Real]] = 0,
                  wavelengths: Iterable[Real] = wl,
+                 ref_wavelength: Real = 650,
                  g: Real = 1,
                  desc: str = 'default',
                  display_color: Optional[str] = None):
@@ -44,6 +45,7 @@ class Medium:
         self.wavelengths = np.array(wavelengths)
         self.g = g
         self.display_color = display_color
+        self.ref_wavelength = ref_wavelength
 
     def __repr__(self):
         return self.desc.capitalize() + ' Optical Medium Object'
@@ -80,7 +82,7 @@ class Medium:
     def mu_s_at(self, wavelengths: Real):
         if iterable(self.mu_s):
             return np.interp(wavelengths, self.wavelengths, self.mu_s)
-        return mu_s
+        return self.mu_s
 
     def mu_a_at(self, wavelengths: Real):
         if iterable(self.mu_a):

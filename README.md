@@ -134,24 +134,23 @@ detection even further.
 
 ## Installation
 
-### CUDA-compatible Systems
+### Basic Install
 To install the project and its dependencies, run the following command:
 
 ```bash
 pip install photon-canon
 ```
 
- > **_WARNING:_** By default, `pip` will try to install `cupy`. If you do not have a compatible GPU installed, this will
- > fail with a `cupy` error. See below for more details.
+ > **_NOTE:_** By default, `pip` will not install `cupy`. On systems without a CUDA-GPU, this is the desired behavior,
+but you will receive an import warning when using this package. IF you have a compatible GPU, see below for CUDA
+options.
 
 
-### Non-CUDA Systems
-As a temporary workaround to install without cupy, run the following:
+### CUDA Systems
+If you havea compatible GPU, you can run `photon-canon` with `cupy` asa drop-in for numpy. If you already have cupy 
+installed, this will be the default behavior. If not, you can install it with `photon-canon` by calling the optional 
+dependencies for CUDA as follows:
 
 ```bash
-pip install --no-dep photon-canon
-pip install numpy pandas scipy
+pip install "photon-canon[cuda]"
 ```
-
-This will manually install the dependencies for CPU-based use. A future version will be released to provide GPU and
-non-GPU builds.

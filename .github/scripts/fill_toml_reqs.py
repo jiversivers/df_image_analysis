@@ -1,3 +1,5 @@
+import re
+
 import toml
 
 
@@ -18,8 +20,8 @@ def fill_toml_reqs():
     # Ensure the dependencies section exists in pyproject.toml
     if 'project' not in toml_data:
         toml_data['project'] = {}
-
-    toml_data['project']['dependencies'] = cleaned_requirements
+    optionals = toml_data['project']['optional-dependencies']['cuda']
+    toml_data['project']['dependencies'] = [req for req in cleaned_requirements if re.sub(r'==.*', '', req) not in optionals]
 
     # # Update the tools.setuptools.dynamic section
     # if 'tools' not in toml_data:

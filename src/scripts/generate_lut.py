@@ -1,7 +1,8 @@
 import itertools
+import os
 import sqlite3
 
-from src.monte_carlo import Medium, System, Detector, Illumination, hardware
+from ..photon_canon import Medium, System, Detector, Illumination, hardware
 
 from tqdm import tqdm
 
@@ -24,7 +25,7 @@ def main():
     mu_a_array = np.arange(1, 102, 1)
     g_array = [0.9]
     d = float('inf')
-    n = 50000
+    n = 100000
     tissue_n = 1.33
     surroundings_n = 1
     recurse = False
@@ -45,8 +46,9 @@ def main():
                     detector=(detector, 0))
 
     # Simulate
-    conn = sqlite3.connect('data/databases/lut.db')
-    c = conn.cursor()
+    os.makedirs('~/.photon_canon', exist_ok=True)
+    con = sqlite3.connect('~/.photon_canon/lut.db')
+    c = con.cursor()
 
     # Table of metadata
     c.execute("""
@@ -96,15 +98,24 @@ def main():
     ) VALUES (?, ?, ?, ?)""", (
         n, recurse, detector is not None, detector.desc if detector is not None else ''
     ))
-    conn.commit()
+    con.commit()
     simulation_id = c.lastrowid
 
     # Add fixed layer details to table
+    # Generate fixed layer details for table
     fixed_layers = []
     for i, (bound, layer) in enumerate(system.stack.items()):
         fixed_layers.append((
-            i, layer.desc, layer.mu_s_at(wl0), layer.mu_a_at(wl0), layer.g, bound[1] - bound[0], wl0, simulation_id
+            int(i),
+            layer.desc,
+            float(layer.mu_s_at(wl0)),
+            float(layer.mu_a_at(wl0)),
+            float(layer.g),
+            float(bound[1] - bound[0]),
+            float(wl0),
+            int(simulation_id)
         ))
+
     c.executemany(f"""
     INSERT INTO fixed_layers (
         stack_order, layer, mu_s, mu_a, g, thickness, ref_wavelength, simulation_id
@@ -117,7 +128,7 @@ def main():
     for (mu_s, mu_a, g) in (pbar := tqdm(itertools.product(mu_s_array, mu_a_array, g_array),
                                          total=len(mu_s_array) * len(mu_a_array) * len(g_array))):
         pbar.set_description(
-            f'{'' if detected_R is None else f'Prev. R: {detected_R} |'} '
+            f"{'' if detected_R is None else f'Prev. R: {detected_R} |'} "
             f'Current params: mu_s={mu_s}, mu_a={mu_a}, g={g}...')
 
         # Update the system
@@ -136,7 +147,7 @@ def main():
                     ) VALUES (?, ?, ?, ?, ?, ?)""", (
             float(mu_s), float(mu_a), float(g), float(d), float(detected_R), simulation_id
         ))
-    conn.commit()
+    con.commit()
 
 
 if __name__ == '__main__':

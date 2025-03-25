@@ -1,6 +1,6 @@
 import os.path
 from numbers import Real
-from typing import Union, Tuple, Iterable, Any
+from typing import Union, Tuple, Iterable
 
 import pandas as pd
 
@@ -10,11 +10,11 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator
 
-from src.monte_carlo import System
 import importlib.resources
 
-# Setup default database and MCLUT version
-con = sqlite3.connect('~/lut.db')
+# Setup default database
+os.makedirs('~/.photon_canon', exist_ok=True)
+con = sqlite3.connect('~/.photon_canon/lut.db')
 c = con.cursor()
 try:
     c.execute("SELECT max(id) FROM mclut_simulations")
@@ -163,27 +163,3 @@ def sample_spectrum(wavelengths: Iterable[Real],
 
     # Interpolate value of sample from CDF
     return np.interp(i, cdf, wavelengths)
-
-
-def add_metadata(conn=con) -> int:
-    # Parse to get metadata
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS mclut_simulations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        photon_count INTEGER NOT NULL,
-        recursive BOOLEAN DEFAULT FALSE,
-        detector BOOLEAN DEFAULT FALSE,
-        detector_description TEXT DEFAULT ''
-        )
-        """)
-
-    c.execute(f"""
-    INSERT INTO mclut_simulations (
-    photon_count, recursive, detector, detector_description
-    ) VALUES (?, ?, ?, ?)""", (
-        n, recurse, detector is not None, detector.desc if detector is not None else ''
-    ))
-    conn.commit()
-
-    return c.lastrowid

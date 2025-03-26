@@ -7,7 +7,7 @@ name = "photon_canon"
 version = "0.1.0"
 description = "An in-depth 3D Monte Carlo simulation toolbox with custom systems of planar mediums, custom beams and detectors."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3"
 keywords = [ "simulation", "parallel", "monte carlo", "photon",]
 dependencies = [ "matplotlib==3.10.1", "numpy==2.2.4", "pandas==2.2.3", "scipy==1.15.2", "tqdm==4.67.1",]
 [[project.authors]]

@@ -38,7 +38,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add asset/
+          git add assets/simulation.png
           git commit -m "Auto-create simulation for README from user issue input" || exit 0
           git push origin main --force
         env:

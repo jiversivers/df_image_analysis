@@ -1,1 +1,1 @@
-from .optics import Medium, System, Illumination, Detector
+from .optics import Photon, Medium, System, Illumination, Detector

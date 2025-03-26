@@ -1,0 +1,46 @@
+name: Simulate Me!
+description: File a bug report.
+title: "Submit this issue form to update the simulation displayed in the README"
+labels: ["just for fun"]
+assignees:
+  - jiversivers
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Simulation
+        The simulation will be run with 250 photons in a dark-field cone with a 2mm water immersion working distance and 
+        0.17 mm cover-slip. You can decide the parameters for semi-infinite media beneath this below.
+  - type: input
+    id: mus
+    attributes:
+      label: Index of refraction
+      description: Input a number greater than or equal to 1. Something between 1.2 and 1.6 is normal, but you do you.
+      placeholder: 1.33
+    validations:
+      required: true
+  - type: input
+    id: mua
+    attributes:
+      label: Absorption Coefficient
+      description: Input a positive absorption coefficient. I recommend something between 0 and 100.
+      placeholder: 4
+    validations:
+      required: true
+  - type: input
+    id: mus
+    attributes:
+      label: Scattering Coefficient
+      description: Input a positive absorption coefficient. I recommend something between 0 and 100. High scattering and
+        low absorption tend to be messy, so keep it under control if you want to have some order.
+      placeholder: 15
+    validations:
+      required: true
+  - type: input
+    id: g
+    attributes:
+      label: Scattering anisotropy
+      description: Input a number  in the range [-1, 1]. -1 is perfectly back-scattering, 1 is perfectly forward scattering, and 0 is totally random.
+      placeholder: 0.75
+    validations:
+      required: true

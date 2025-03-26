@@ -10,7 +10,8 @@ readme = "README.md"
 requires-python = ">=3"
 keywords = [ "simulation", "parallel", "monte carlo", "photon",]
 dependencies = [ "matplotlib==3.10.1", "numpy==2.2.4", "pandas==2.2.3", "scipy==1.15.2", "tqdm==4.67.1",]
-[[project.authors]]
+
+[project.authors]
 name = "Jesse D Ivers"
 email = "iversjesse@gmail.com"
 
@@ -27,5 +28,8 @@ Homepage = "https://www.github.com/jiversivers/monte_carlo"
 Source = "https://www.github.com/jiversivers/monte_carlo"
 "Check me out" = "https://www.jivers.me"
 
-[tools.setuptools.package-data]
-photon_canon = [ "data/*",]
+[tool.setuptools.packages]
+find = { where = ["src"] }
+
+[tool.setuptools.package-data]
+"photon_canon" = ["data/*"]

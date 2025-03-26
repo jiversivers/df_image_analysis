@@ -1,0 +1,28 @@
+name: Update Simulation from Issue Input
+
+on:
+  issues:
+    types: [ opened, edited ]
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'just for fun')
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Set up pyhton
+        uses: actions/setup-python@v4
+
+      - name: install module
+        run: pip install -e .
+
+      - name: Get issue content
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          ECHO $ISSUE_BODY > issue_body.txt
+
+      - name: Update asset
+        run: python .github/scripts/make_asset.py

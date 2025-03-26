@@ -9,7 +9,7 @@ description = "An in-depth 3D Monte Carlo simulation toolbox with custom systems
 readme = "README.md"
 requires-python = ">=3.12"
 keywords = [ "simulation", "parallel", "monte carlo", "photon",]
-dependencies = [ "matplotlib==3.10.1", "numpy==2.2.4", "pandas==2.2.3", "scipy==1.15.2",]
+dependencies = [ "matplotlib==3.10.1", "numpy==2.2.4", "pandas==2.2.3", "scipy==1.15.2", "tqdm==4.67.1",]
 [[project.authors]]
 name = "Jesse D Ivers"
 email = "iversjesse@gmail.com"
@@ -18,8 +18,8 @@ email = "iversjesse@gmail.com"
 file = "LICENSE.txt"
 
 [project.optional-dependencies]
-cuda = ["cupy"]
-dev = [ "toml"]
+cuda = [ "cupy",]
+dev = [ "toml",]
 test = [ "unittest",]
 
 [project.urls]

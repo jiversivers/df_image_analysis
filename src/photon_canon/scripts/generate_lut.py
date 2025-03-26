@@ -3,7 +3,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from ..photon_canon import Medium, System, Detector, Illumination, hardware
+from src.photon_canon import Medium, System, Detector, Illumination, hardware
 
 from tqdm import tqdm
 
@@ -154,4 +154,5 @@ def main():
 
 
 if __name__ == '__main__':
+    # TODO: Add parsing for command line args with flags for things like thickness
     main()

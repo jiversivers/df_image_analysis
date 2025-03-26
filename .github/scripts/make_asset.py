@@ -1,8 +1,9 @@
 import sys
+import re
+
 import photon_canon as pc
 import numpy as np
 import matplotlib.pyplot as plt
-import yaml
 from matplotlib import patches
 
 from photon_canon.hardware import ID
@@ -11,13 +12,17 @@ from photon_canon.hardware import ID
 def get_parameters_from_yaml():
     # Read issue body
     with open('issue_body.txt', 'r') as f:
-        issue_data = yaml.safe_load(f)
+        issue_data = f.read()
 
     # Extract and float params
-    n = float(issue_data.get('n', 1.5))
-    mus = float(issue_data.get('mus', 10))
-    mua = float(issue_data.get('mua', 2))
-    g = float(issue_data.get('g', 0.75))
+    match = float(re.search(r"Index of refraction\s*([\d.]+)", issue_data))
+    n = match.group(1) if match else 1.5
+    match = float(re.search(r"Absorption Coefficient\s*([\d.]+)", issue_data).group(1))
+    mua = match.group(1) if match else 15
+    match = float(re.search(r"Scattering Coefficient\s*([\d.]+)", issue_data).group(1))
+    mus = match.group(1) if match else 4
+    match = float(re.search(r"Scattering anisotropy\s*([\d.-]+)", issue_data).group(1))
+    g = match.group(1) if match else 0.75
 
     return n, mus, mua, g
 

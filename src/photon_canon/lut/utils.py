@@ -1,12 +1,18 @@
 import sqlite3
 from numbers import Real
+from pathlib import Path
 from typing import Union, Iterable
 
 import numpy as np
 from .. import System
 
-con = sqlite3.connect('~/.photon_canon/lut.db')
+# Set up simulation database
+db_dir = Path.home() / ".photon_canon"
+db_dir.mkdir(parents=True, exist_ok=True)
+db_path = db_dir / "lut.db"
+con = sqlite3.connect(db_path)
 c = con.cursor()
+
 def add_metadata(n=None, recursive=False, detector=None) -> int:
     # Parse to get metadata
     c.execute("""

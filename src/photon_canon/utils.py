@@ -1,5 +1,6 @@
 import os.path
 from numbers import Real
+from pathlib import Path
 from typing import Union, Tuple, Iterable
 
 import pandas as pd
@@ -13,9 +14,12 @@ from scipy.interpolate import RegularGridInterpolator
 import importlib.resources
 
 # Setup default database
-os.makedirs('~/.photon_canon', exist_ok=True)
-con = sqlite3.connect('~/.photon_canon/lut.db')
+db_dir = Path.home() / ".photon_canon"
+db_dir.mkdir(parents=True, exist_ok=True)
+db_path = db_dir / "lut.db"
+con = sqlite3.connect(db_path)
 c = con.cursor()
+
 try:
     c.execute("SELECT max(id) FROM mclut_simulations")
     latest_simulation_id = c.fetchone()[0]

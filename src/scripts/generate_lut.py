@@ -1,6 +1,7 @@
 import itertools
 import os
 import sqlite3
+from pathlib import Path
 
 from ..photon_canon import Medium, System, Detector, Illumination, hardware
 
@@ -45,9 +46,11 @@ def main():
                     illuminator=led,
                     detector=(detector, 0))
 
-    # Simulate
-    os.makedirs('~/.photon_canon', exist_ok=True)
-    con = sqlite3.connect('~/.photon_canon/lut.db')
+    # Set up simulation database
+    db_dir = Path.home() / ".photon_canon"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_path = db_dir / "lut.db"
+    con = sqlite3.connect(db_path)
     c = con.cursor()
 
     # Table of metadata

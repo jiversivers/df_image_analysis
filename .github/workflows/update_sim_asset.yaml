@@ -22,7 +22,14 @@ jobs:
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          ECHO $ISSUE_BODY > issue_body.txt
+          echo $ISSUE_BODY > issue_body.txt
 
       - name: Update asset
         run: python .github/scripts/make_asset.py
+
+      - name: Close issue
+        run: |
+          curl -X PATCH -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+               -H "Accept: application/vnd.github.v3+json" \
+               -d '{"state": "closed"}' \
+               "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}"

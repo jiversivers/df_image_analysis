@@ -9,20 +9,20 @@ from matplotlib import patches
 from photon_canon.hardware import ID
 
 
-def get_parameters_from_yaml():
+def get_parameters_from_issue():
     # Read issue body
     with open('issue_body.txt', 'r') as f:
         issue_data = f.read()
 
     # Extract and float params
-    match = float(re.search(r"Index of refraction\s*([\d.]+)", issue_data))
-    n = match.group(1) if match else 1.5
-    match = float(re.search(r"Absorption Coefficient\s*([\d.]+)", issue_data).group(1))
-    mua = match.group(1) if match else 15
-    match = float(re.search(r"Scattering Coefficient\s*([\d.]+)", issue_data).group(1))
-    mus = match.group(1) if match else 4
-    match = float(re.search(r"Scattering anisotropy\s*([\d.-]+)", issue_data).group(1))
-    g = match.group(1) if match else 0.75
+    match = re.search(r"Index of refraction\s*([\d.]+)", issue_data)
+    n = float(match.group(1) if match else 1.5)
+    match = re.search(r"Absorption Coefficient\s*([\d.]+)", issue_data).group(1)
+    mua = float(match.group(1) if match else 15)
+    match = re.search(r"Scattering Coefficient\s*([\d.]+)", issue_data).group(1)
+    mus = float(match.group(1) if match else 4)
+    match = re.search(r"Scattering anisotropy\s*([\d.-]+)", issue_data).group(1)
+    g = float(match.group(1) if match else 0.75)
 
     return n, mus, mua, g
 
@@ -126,5 +126,5 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         args = [float(arg) for arg in sys.argv[1:]]
     else:
-        args = get_parameters_from_yaml()
+        args = get_parameters_from_issue()
     simulate_asset(*args)

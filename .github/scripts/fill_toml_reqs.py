@@ -23,12 +23,6 @@ def fill_toml_reqs():
     optionals = toml_data['project']['optional-dependencies']['cuda']
     toml_data['project']['dependencies'] = [req for req in cleaned_requirements if re.sub(r'==.*', '', req) not in optionals]
 
-    # # Update the tools.setuptools.dynamic section
-    # if 'tools' not in toml_data:
-    #     toml_data['tools'] = {}
-    # if 'setuptools' not in toml_data['tools']:
-    #     toml_data['tools']['setuptools'] = {}
-
     # Write the updated content back to the pyproject.toml file
     with open('pyproject.toml', 'w') as file:
         toml.dump(toml_data, file)

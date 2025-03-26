@@ -16,7 +16,7 @@ body:
     attributes:
       label: Index of refraction
       description: Input a number greater than or equal to 1. Something between 1.2 and 1.6 is normal, but you do you.
-      placeholder: 1.33
+      placeholder: "1.33"
     validations:
       required: true
   - type: input
@@ -24,7 +24,7 @@ body:
     attributes:
       label: Absorption Coefficient
       description: Input a positive absorption coefficient. I recommend something between 0 and 100.
-      placeholder: 4
+      placeholder: "4"
     validations:
       required: true
   - type: input
@@ -33,7 +33,7 @@ body:
       label: Scattering Coefficient
       description: Input a positive absorption coefficient. I recommend something between 0 and 100. High scattering and
         low absorption tend to be messy, so keep it under control if you want to have some order.
-      placeholder: 15
+      placeholder: "15"
     validations:
       required: true
   - type: input
@@ -41,6 +41,6 @@ body:
     attributes:
       label: Scattering anisotropy
       description: Input a number  in the range [-1, 1]. -1 is perfectly back-scattering, 1 is perfectly forward scattering, and 0 is totally random.
-      placeholder: 0.75
+      placeholder: "0.75"
     validations:
       required: true

@@ -2,13 +2,27 @@ import sys
 import photon_canon as pc
 import numpy as np
 import matplotlib.pyplot as plt
+import yaml
 from matplotlib import patches
 
 from photon_canon.hardware import ID
 
 
+def get_parameters_from_yaml():
+    # Read issue body
+    with open('issue_body.txt', 'r') as f:
+        issue_data = yaml.safe_load(f)
+
+    # Extract and float params
+    n = float(issue_data.get('n', 1.5))
+    mus = float(issue_data.get('mus', 10))
+    mua = float(issue_data.get('mua', 2))
+    g = float(issue_data.get('g', 0.75))
+
+    return n, mus, mua, g
+
 def make_all_plots(photon, tissue_start=0.217, into_tissue_step=1):
-    fig = plt.figure(figsize=(14, 17.5))
+    fig = plt.figure(figsize=(28, 35))
     ax = np.array([
         fig.add_subplot(3, 4, 1, projection='3d'), fig.add_subplot(3, 4, 2), fig.add_subplot(3, 4, 3),
         fig.add_subplot(3, 4, 4),  # 0-3: Paths
@@ -89,20 +103,23 @@ def simulate_asset(*args):
 
     s = pc.System(
         dw, 0.2,
+        g, 0.017,
         t, float('inf'),
         surrounding_n=surroundings_n,
         illuminator=LED,
         detector=(detector, 0)
     )
-    print(s)
 
     detector.reset()
     photon = s.beam(batch_size=n, recurse=False, russian_roulette_constant=20, tir_limit=100)
     photon.simulate()
-    fig = make_all_plots(photon, tissue_start=0.2, into_tissue_step=1)
+    fig = make_all_plots(photon, tissue_start=0.217, into_tissue_step=2)
 
     fig.savefig('assets/simulation.png')
 
 if __name__ == '__main__':
-    args = [float(arg) for arg in sys.argv[1:]]
+    if len(sys.argv) > 1:
+        args = [float(arg) for arg in sys.argv[1:]]
+    else:
+        args = get_parameters_from_yaml()
     simulate_asset(*args)

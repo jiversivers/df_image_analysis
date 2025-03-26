@@ -12,7 +12,7 @@ body:
         The simulation will be run with 250 photons in a dark-field cone with a 2mm water immersion working distance and 
         0.17 mm cover-slip. You can decide the parameters for semi-infinite media beneath this below.
   - type: input
-    id: mus
+    id: n
     attributes:
       label: Index of refraction
       description: Input a number greater than or equal to 1. Something between 1.2 and 1.6 is normal, but you do you.

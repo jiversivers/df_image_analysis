@@ -17,11 +17,11 @@ def get_parameters_from_issue():
     # Extract and float params
     match = re.search(r"Index of refraction\s*([\d.]+)", issue_data)
     n = float(match.group(1) if match else 1.5)
-    match = re.search(r"Absorption Coefficient\s*([\d.]+)", issue_data).group(1)
+    match = re.search(r"Absorption Coefficient\s*([\d.]+)", issue_data)
     mua = float(match.group(1) if match else 15)
-    match = re.search(r"Scattering Coefficient\s*([\d.]+)", issue_data).group(1)
+    match = re.search(r"Scattering Coefficient\s*([\d.]+)", issue_data)
     mus = float(match.group(1) if match else 4)
-    match = re.search(r"Scattering anisotropy\s*([\d.-]+)", issue_data).group(1)
+    match = re.search(r"Scattering anisotropy\s*([\d.-]+)", issue_data)
     g = float(match.group(1) if match else 0.75)
 
     return n, mus, mua, g

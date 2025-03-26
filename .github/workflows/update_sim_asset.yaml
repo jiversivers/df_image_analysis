@@ -12,20 +12,37 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Set up pyhton
+      - name: Set up Python
         uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
 
       - name: install module
         run: pip install -e .
 
-      - name: Get issue content
+      - name: Get Issue Content
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
           echo $ISSUE_BODY > issue_body.txt
 
+      - name: Get onto main
+        run: |
+          git fetch
+          git checkout main
+
       - name: Update asset
         run: python .github/scripts/make_asset.py
+
+      - name: Configure Git and Push asset
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add asset/
+          git commit -m "Auto-create simulation for README from user issue input" || exit 0
+          git push origin main --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Close issue
         run: |

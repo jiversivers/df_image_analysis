@@ -26,8 +26,8 @@ def fill_toml_reqs():
 
     # Add explicit quotes back for namespacing
     for i, req in enumerate(cleaned_requirements):
-        if req.strip() == 'photon_canon.data':
-            cleaned_requirements[i] = '"photon_canon.data"'
+        if req.strip() == 'photon_canon':
+            cleaned_requirements[i] = '"photon_canon"'
 
     # Write the updated content back to the pyproject.toml file
     with open('pyproject.toml', 'w') as file:

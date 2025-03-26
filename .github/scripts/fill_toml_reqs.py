@@ -21,12 +21,17 @@ def fill_toml_reqs():
     if 'project' not in toml_data:
         toml_data['project'] = {}
     optionals = toml_data['project']['optional-dependencies']['cuda']
-    toml_data['project']['dependencies'] = [req for req in cleaned_requirements if re.sub(r'==.*', '', req) not in optionals]
+    toml_data['project']['dependencies'] = [req for req in cleaned_requirements if
+                                            re.sub(r'==.*', '', req) not in optionals]
+
+    # Add explicit quotes back for namespacing
+    for i, req in enumerate(cleaned_requirements):
+        if req.strip() == 'photon_canon.data':
+            cleaned_requirements[i] = '"photon_canon.data"'
 
     # Write the updated content back to the pyproject.toml file
     with open('pyproject.toml', 'w') as file:
         toml.dump(toml_data, file)
-
 
 if __name__ == "__main__":
     fill_toml_reqs()

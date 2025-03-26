@@ -28,4 +28,4 @@ Source = "https://www.github.com/jiversivers/monte_carlo"
 "Check me out" = "https://www.jivers.me"
 
 [tools.setuptools.package-data]
-photon_canon = [ "data/*.tsv",]
+"photon_canon.data" = [ "*.tsv",]
